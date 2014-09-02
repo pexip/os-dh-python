@@ -13,6 +13,17 @@ index 12cc3f2..b330192 100644
               'pypy': 'pypy'}
  
  PUBLIC_DIR_RE = {
+@@ -98,8 +98,8 @@ if [ "$1" = rtupdate ]; then
+ fi''',
+     'cpython3': '''
+ if [ "$1" = rtupdate ]; then
+-\tpy3clean {pkg_arg} {dname}
+-\tpy3compile {pkg_arg} {args} {dname}
++\tpy3clean {dname}
++\tpy3compile {args} {dname}
+ fi''',
+     'pypy': ''
+ }
 diff --git a/dhpython/depends.py b/dhpython/depends.py
 index b276e4c..2bd02c9 100644
 --- a/dhpython/depends.py

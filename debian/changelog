@@ -1,3 +1,10 @@
+dh-python (1.20140511-1~bpo70+1pexip3) pexip; urgency=low
+
+  * debian/patches/disable_multiarch_dependencies.patch:
+    Reinstate ancient python3 rtupdate behaviour.
+
+ -- John-Mark Bell <jmb@pexip.com>  Tue, 02 Sep 2014 19:37:12 +0100
+
 dh-python (1.20140511-1~bpo70+1pexip2) pexip; urgency=low
 
   * debian/patches/disable_multiarch_dependencies.patch:
