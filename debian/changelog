@@ -1,3 +1,10 @@
+dh-python (1.20140511-1~bpo70+1pexip2) pexip; urgency=low
+
+  * debian/patches/disable_multiarch_dependencies.patch:
+    Relax minimum python3 version.
+
+ -- John-Mark Bell <jmb@pexip.com>  Tue, 02 Sep 2014 17:23:42 +0100
+
 dh-python (1.20140511-1~bpo70+1pexip1) pexip; urgency=low
 
   * Prepare Pexip packaging
