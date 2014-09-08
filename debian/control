@@ -13,7 +13,7 @@ Vcs-Git: git://anonscm.debian.org/dh-python/dh-python.git
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=dh-python/dh-python.git
 X-Python3-Version: >= 3.2
 XS-Testsuite: autopkgtest
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ wheezy
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ jessie
 
 Package: dh-python
 Architecture: all
