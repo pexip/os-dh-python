@@ -1,11 +1,3 @@
-dh-python (2.20170125~bpo8+1) jessie-backports; urgency=medium
-
-  * Rebuild for jessie-backports.
-  * Update default and supported Python versions
-  * Add some Jessie packages to fallback files
-
- -- Piotr Ożarowski <piotr@debian.org>  Tue, 07 Mar 2017 21:47:01 +0100
-
 dh-python (2.20170125) unstable; urgency=medium
 
   * pybuild.pm:
