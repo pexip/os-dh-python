@@ -41,14 +41,19 @@ def create_pydistutils_cfg(func):
         fpath = join(args['home_dir'], '.pydistutils.cfg')
         if not exists(fpath):
             with open(fpath, 'w', encoding='utf-8') as fp:
-                fp.writelines(['[clean]\n',
-                               'all=1\n',
-                               '[build]\n',
-                               'build-lib={}\n'.format(args['build_dir']),
-                               '[install]\n',
-                               'install-layout=deb\n',
-                               'install-scripts=/usr/bin\n',
-                               'install-lib={}\n'.format(args['install_dir'])])
+                lines = ['[clean]\n',
+                         'all=1\n',
+                         '[build]\n',
+                         'build-lib={}\n'.format(args['build_dir']),
+                         '[install]\n',
+                         'force=1\n',
+                         'install-layout=deb\n',
+                         'install-scripts=/usr/bin\n',
+                         'install-lib={}\n'.format(args['install_dir']),
+                         '[easy_install]\n',
+                         'allow_hosts=None\n']
+                log.debug('pydistutils config file:\n%s', ''.join(lines))
+                fp.writelines(lines)
         context['ENV']['HOME'] = args['home_dir']
         return func(self, context, args, *oargs, **kwargs)
 
@@ -81,9 +86,6 @@ class BuildSystem(Base):
         super(BuildSystem, self).clean(context, args)
         dpath = join(context['dir'], 'build')
         isdir(dpath) and rmtree(dpath)
-        for fname in glob1(context['dir'], '*.egg-info'):
-            fpath = join(context['dir'], fname)
-            rmtree(fpath) if isdir(fpath) else remove(fpath)
         if exists(args['interpreter'].binary()):
             return '{interpreter} {setup_py} clean {args}'
         return 0  # no need to invoke anything
@@ -101,6 +103,11 @@ class BuildSystem(Base):
     @shell_command
     @create_pydistutils_cfg
     def install(self, context, args):
+        # remove egg-info dirs from build_dir
+        for fname in glob1(args['build_dir'], '*.egg-info'):
+            fpath = join(args['build_dir'], fname)
+            rmtree(fpath) if isdir(fpath) else remove(fpath)
+
         return '{interpreter.binary_dv} {setup_py} install --root {destdir} {args}'
 
     @shell_command

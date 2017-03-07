@@ -3,19 +3,27 @@ Section: python
 Priority: optional
 Maintainer: Piotr Ożarowski <piotr@debian.org>
 Uploaders: Stefano Rivera <stefanor@debian.org>, Barry Warsaw <barry@debian.org>
-Build-Depends: debhelper (>= 9), python3-minimal,
- python3.2,
+Build-Depends: debhelper (>= 9), python3-minimal, libpython3-stdlib, libdpkg-perl,
 # provides rst2man command (python3-docutils not used to avoid circular deps):
- python-docutils
-Standards-Version: 3.9.5
-Vcs-Git: git://anonscm.debian.org/dh-python/dh-python.git
-Vcs-Browser: http://anonscm.debian.org/gitweb/?p=dh-python/dh-python.git
+ python-docutils,
+# used by tests: (disabled to avoid circular deps with python3)
+# python3-nose,
+# python3-all, python3-all-dbg, python3-all-dev,
+# python-all, python-all-dbg, python-all-dev
+Standards-Version: 3.9.8
+Vcs-Git: https://anonscm.debian.org/git/dh-python/dh-python.git
+Vcs-Browser: https://anonscm.debian.org/cgit/dh-python/dh-python.git
 X-Python3-Version: >= 3.2
-XS-Testsuite: autopkgtest
 
 Package: dh-python
 Architecture: all
+Multi-Arch: foreign
 Depends: ${misc:Depends}, ${python3:Depends}
+Suggests: libdpkg-perl
+Breaks:
+# due to /usr/bin/dh_python3 and debhelper files
+ python3 (<< 3.3.2-4~)
+Replaces: python3 (<< 3.3.2-4~)
 Description: Debian helper tools for packaging Python libraries and applications
  This package contains:
   * pybuild - invokes various build systems for requested Python versions in

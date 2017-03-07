@@ -22,6 +22,7 @@
 import logging
 import os
 import re
+from functools import partial
 from os.path import exists, isdir, join
 from subprocess import PIPE, Popen
 from dhpython import PKG_PREFIX_MAP, PUBLIC_DIR_RE,\
@@ -49,12 +50,27 @@ REQUIRES_RE = re.compile(r'''
     \s*
     (?P<enabled_extras>(?:\[[^\]]*\])?)  # ignored for now
     \s*
+    \(?  # optional parenthesis
     (?:  # optional minimum/maximum version
         (?P<operator><=?|>=?|==|!=)
         \s*
         (?P<version>(\w|[-.])+)
+        (?:  # optional interval minimum/maximum version
+            \s*
+            ,
+            \s*
+            (?P<operator2><=?|>=?|==|!=)
+            \s*
+            (?P<version2>(\w|[-.])+)
+        )?
     )?
+    \)?  # optional closing parenthesis
     ''', re.VERBOSE)
+DEB_VERS_OPS = {
+    '==': '=',
+    '<':  '<<',
+    '>':  '>>',
+}
 
 
 def validate(fpath):
@@ -114,14 +130,17 @@ def load(impl):
     return result
 
 
-def guess_dependency(impl, req, version=None):
-    log.debug('trying to guess dependency for %s (python=%s)',
+def guess_dependency(impl, req, version=None, bdep=None,
+                     accept_upstream_versions=False):
+    bdep = bdep or {}
+    log.debug('trying to find dependency for %s (python=%s)',
               req, version)
     if isinstance(version, str):
         version = Version(version)
 
     # some upstreams have weird ideas for distribution name...
-    name, rest = re.compile('([^><= \[]+)(.*)').match(req).groups()
+    name, rest = re.compile('([^!><= \(\)\[]+)(.*)').match(req).groups()
+    # TODO: check stdlib and dist-packaged for name.py and name.so files
     req = safe_name(name) + rest
 
     data = load(impl)
@@ -146,13 +165,33 @@ def guess_dependency(impl, req, version=None):
                 # Debian dependency
                 return item['dependency']
             if req_d['version'] and (item['standard'] or item['rules']) and\
-                    req_d['operator'] not in (None, '=='):
+                    req_d['operator'] not in (None, '!='):
+                o = _translate_op(req_d['operator'])
                 v = _translate(req_d['version'], item['rules'], item['standard'])
-                return "%s (%s %s)" % (item['dependency'], req_d['operator'], v)
+                d = "%s (%s %s)" % (item['dependency'], o, v)
+                if req_d['version2'] and req_d['operator2'] not in (None,'!='):
+                    o2 = _translate_op(req_d['operator2'])
+                    v2 = _translate(req_d['version2'], item['rules'], item['standard'])
+                    d += ", %s (%s %s)" % (item['dependency'], o2, v2)
+                return d
+            elif accept_upstream_versions and req_d['version'] and \
+                    req_d['operator'] not in (None,'!='):
+                o = _translate_op(req_d['operator'])
+                d = "%s (%s %s)" % (item['dependency'], o, req_d['version'])
+                if req_d['version2'] and req_d['operator2'] not in (None,'!='):
+                    o2 = _translate_op(req_d['operator2'])
+                    d += ", %s (%s %s)" % (item['dependency'], o2, req_d['version2'])
+                return d
             else:
+                if item['dependency'] in bdep:
+                    if None in bdep[item['dependency']] and bdep[item['dependency']][None]:
+                        return "{} ({})".format(item['dependency'], bdep[item['dependency']][None])
+                    # if arch in bdep[item['dependency']]:
+                    # TODO: handle architecture specific dependencies from build depends
+                    #       (current architecture is needed here)
                 return item['dependency']
 
-    # try dpkg -S
+    # search for Egg metadata file or directory (using dpkg -S)
     query = PYDIST_DPKG_SEARCH_TPLS[impl].format(ci_regexp(safe_name(name)))
 
     log.debug("invoking dpkg -S %s", query)
@@ -173,24 +212,32 @@ def guess_dependency(impl, req, version=None):
     else:
         log.debug('dpkg -S did not find package for %s: %s', name, stderr)
 
-    # fall back to python-distname
     pname = sensible_pname(impl, name)
-    log.info('Cannot find installed package that provides %s. '
-             'Using %s as package name. Please add "%s correct_package_name" '
-             'line to debian/py3dist-overrides to override it IF this is incorrect.',
-             name, pname, safe_name(name))
-    return pname
+    log.info('Cannot find package that provides %s. '
+             'Please add package that provides it to Build-Depends or '
+             'add "%s %s" line to %s or add proper '
+             ' dependency to Depends by hand and ignore this info.',
+             name, safe_name(name), pname, PYDIST_OVERRIDES_FNAMES[impl])
+    # return pname
 
 
-def parse_pydep(impl, fname):
+def parse_pydep(impl, fname, bdep=None, options=None,
+                depends_sec=None, recommends_sec=None, suggests_sec=None):
+    depends_sec = depends_sec or []
+    recommends_sec = recommends_sec or []
+    suggests_sec = suggests_sec or []
+
     public_dir = PUBLIC_DIR_RE[impl].match(fname)
-    if public_dir and len(public_dir.group(1)) != 1:
+    ver = None
+    if public_dir and public_dir.groups() and len(public_dir.group(1)) != 1:
         ver = public_dir.group(1)
-    else:
-        ver = None
 
-    result = []
-    modified = optional_section = False
+    guess_deps = partial(guess_dependency, impl=impl, version=ver, bdep=bdep,
+                         accept_upstream_versions=getattr(
+                             options, 'accept_upstream_versions', False))
+
+    result = {'depends': [], 'recommends': [], 'suggests': []}
+    modified = section = False
     processed = []
     with open(fname, 'r', encoding='utf-8') as fp:
         for line in fp:
@@ -199,20 +246,29 @@ def parse_pydep(impl, fname):
                 processed.append(line)
                 continue
             if line.startswith('['):
-                optional_section = True
-            if optional_section:
+                section = line[1:-1].strip()
                 processed.append(line)
                 continue
-            dependency = guess_dependency(impl, line, ver)
-            if dependency:
-                result.append(dependency)
-                if 'setuptools' in line.lower():
-                    modified = True
+            if section:
+                if section in depends_sec:
+                    result_key = 'depends'
+                elif section in recommends_sec:
+                    result_key = 'recommends'
+                elif section in suggests_sec:
+                    result_key = 'suggests'
                 else:
                     processed.append(line)
+                    continue
+            else:
+                result_key = 'depends'
+
+            dependency = guess_deps(req=line)
+            if dependency:
+                result[result_key].append(dependency)
+                modified = True
             else:
                 processed.append(line)
-    if modified:
+    if modified and public_dir:
         with open(fname, 'w', encoding='utf-8') as fp:
             fp.writelines(i + '\n' for i in processed)
     return result
@@ -284,3 +340,16 @@ def _translate(version, rules, standard):
     if standard == 'PEP386':
         version = PRE_VER_RE.sub(r'~\g<1>', version)
     return version
+
+
+def _translate_op(operator):
+    """Translate Python version operator into Debian one.
+
+    >>> _translate_op('==')
+    '='
+    >>> _translate_op('<')
+    '<<'
+    >>> _translate_op('<=')
+    '<='
+    """
+    return DEB_VERS_OPS.get(operator, operator)

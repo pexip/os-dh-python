@@ -23,8 +23,9 @@
 import logging
 import argparse
 import sys
-from os import environ, getcwd, makedirs
+from os import environ, getcwd, makedirs, remove
 from os.path import abspath, exists, join
+from shutil import rmtree
 
 logging.basicConfig(format='%(levelname).1s: pybuild '
                            '%(module)s:%(lineno)d: %(message)s')
@@ -34,7 +35,7 @@ log = logging.getLogger('dhpython')
 def main(cfg):
     log.debug('cfg: %s', cfg)
     from dhpython import build
-    from dhpython.version import Version, get_requested_versions
+    from dhpython.version import Version, build_sorted, get_requested_versions
     from dhpython.interpreter import Interpreter
     from dhpython.tools import execute, move_matching_files
 
@@ -48,12 +49,25 @@ def main(cfg):
         nocheck = 'nocheck' in environ['DEB_BUILD_OPTIONS']
 
     env = environ.copy()
-    if 'LC_ALL' not in env:
-        env['LC_ALL'] = 'C.UTF-8'
+    # set some defaults in environ to make the build reproducible
+    env.setdefault('LC_ALL', 'C.UTF-8')
+    env.setdefault('no_proxy', 'localhost')
     if 'http_proxy' not in env:
         env['http_proxy'] = 'http://127.0.0.1:9/'
+    elif not env['http_proxy']:
+        del env['http_proxy']  # some tools don't like empty var.
     if 'https_proxy' not in env:
         env['https_proxy'] = 'https://127.0.0.1:9/'
+    elif not env['https_proxy']:
+        del env['https_proxy']  # some tools don't like empty var.
+    try:
+        # Set _PYTHON_HOST_PLATFORM to ensure debugging symbols on, f.e. i386
+        # emded a constant name regardless of the 32/64-bit kernel.
+        env.setdefault(
+            '_PYTHON_HOST_PLATFORM',
+            '{env[DEB_TARGET_ARCH_OS]}-{env[DEB_TARGET_ARCH]}'.format(env=env))
+    except KeyError:
+        pass
 
     if cfg.system:
         certainty = 99
@@ -153,14 +167,16 @@ def main(cfg):
             'home_dir': abspath(home_dir)})
         if interpreter == 'pypy':
             args['install_dir'] = '/usr/lib/pypy/dist-packages/'
-        if step == 'test':
-            pp = context['ENV'].get('PYTHONPATH', '')
-            args['test_dir'] = join(args['destdir'], args['install_dir'].lstrip('/'))
-            if args['test_dir'] not in pp.split(':'):
-                pp = "{}:{}".format(pp, args['test_dir']).lstrip(':')
-            if args['build_dir'] not in pp.split(':'):
-                pp = "{}:{}".format(pp, args['build_dir']).lstrip(':')
-            args['PYTHONPATH'] = pp
+        if step in {'build', 'test'}:
+            pp = context['ENV'].get('PYTHONPATH')
+            pp = pp.split(':') if pp else []
+            if step == 'test':
+                args['test_dir'] = join(args['destdir'], args['install_dir'].lstrip('/'))
+                if args['test_dir'] not in pp:
+                    pp.append(args['test_dir'])
+            if args['build_dir'] not in pp:
+                pp.append(args['build_dir'])
+            args['PYTHONPATH'] = ':'.join(pp)
 
         if not exists(args['build_dir']):
             makedirs(args['build_dir'])
@@ -200,11 +216,20 @@ def main(cfg):
             else:
                 log_file = False
             command = before_cmd.format(**args)
+            log.info(command)
             output = execute(command, context['dir'], env, log_file)
             if output['returncode'] != 0:
                 msg = 'exit code={}: {}'.format(output['returncode'], command)
                 raise Exception(msg)
 
+        fpath = join(args['home_dir'], 'build_dirs_to_rm_before_install')
+        if step == 'install' and exists(fpath):
+            with open(fpath) as fp:
+                for line in fp:
+                    dpath = join(args['build_dir'], line.strip('\n'))
+                    if exists(dpath):
+                        rmtree(dpath)
+            remove(fpath)
         result = func(context, args)
 
         after_cmd = get_option('after_{}'.format(step), interpreter, version)
@@ -214,6 +239,7 @@ def main(cfg):
             else:
                 log_file = False
             command = after_cmd.format(**args)
+            log.info(command)
             output = execute(command, context['dir'], env, log_file)
             if output['returncode'] != 0:
                 msg = 'exit code={}: {}'.format(output['returncode'], command)
@@ -238,11 +264,12 @@ def main(cfg):
         if step == 'test' and nocheck:
             exit(0)
         for i in cfg.interpreter:
-            iversions = versions
+            ipreter = Interpreter(interpreter.format(version=versions[0]))
+            iversions = build_sorted(versions, impl=ipreter.impl)
             if '{version}' not in i and len(versions) > 1:
                 log.info('limiting Python versions to %s due to missing {version}'
-                         ' in interpreter string', str(versions[0]))
-                iversions = versions[:1]  # just the default or closest to default
+                         ' in interpreter string', str(versions[-1]))
+                iversions = versions[-1:]  # just the default or closest to default
             for version in iversions:
                 if is_disabled(step, i, version):
                     continue
@@ -266,11 +293,12 @@ def main(cfg):
     try:
         context_map = {}
         for i in cfg.interpreter:
-            iversions = versions
+            ipreter = Interpreter(interpreter.format(version=versions[0]))
+            iversions = build_sorted(versions, impl=ipreter.impl)
             if '{version}' not in i and len(versions) > 1:
                 log.info('limiting Python versions to %s due to missing {version}'
-                         ' in interpreter string', str(versions[0]))
-                iversions = versions[:1]  # just the default or closest to default
+                         ' in interpreter string', str(versions[-1]))
+                iversions = versions[-1:]  # just the default or closest to default
             for version in iversions:
                 key = (i, version)
                 if key in context_map:
@@ -382,18 +410,18 @@ def parse_args(argv):
 
     dirs = parser.add_argument_group('DIRECTORIES')
     dirs.add_argument('-d', '--dir', action='store', metavar='DIR',
-                      default=getcwd(),
+                      default=environ.get('PYBUILD_DIR', getcwd()),
                       help='source files directory - base for other relative dirs [default: CWD]')
     dirs.add_argument('--dest-dir', action='store', metavar='DIR', dest='destdir',
                       default=environ.get('DESTDIR', 'debian/tmp'),
                       help='destination directory [default: debian/tmp]')
     dirs.add_argument('--ext-dest-dir', action='store', metavar='DIR', dest='ext_destdir',
-                      default=environ.get('EXT_DESTDIR'),
+                      default=environ.get('PYBUILD_EXT_DESTDIR'),
                       help='destination directory for .so files')
     dirs.add_argument('--ext-pattern', action='store', metavar='PATTERN',
-                      default=environ.get('EXT_PATTERN', r'\.so(\.[^/]*)?$'),
+                      default=environ.get('PYBUILD_EXT_PATTERN', r'\.so(\.[^/]*)?$'),
                       help='regular expression for files that should be moved'
-                      ' if --ext-destdir is set [default: .so files]')
+                      ' if --ext-dest-dir is set [default: .so files]')
     dirs.add_argument('--install-dir', action='store', metavar='DIR',
                       help='installation directory [default: .../dist-packages]')
     dirs.add_argument('--name', action='store',

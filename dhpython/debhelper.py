@@ -19,11 +19,20 @@
 # THE SOFTWARE.
 
 import logging
+import re
 from os import makedirs, chmod
-from os.path import exists, join, dirname
-from dhpython import PKG_NAME_TPLS, RT_LOCATIONS, RT_TPLS
+from os.path import basename, exists, join, dirname
+from sys import argv
+from dhpython import DEPENDS_SUBSTVARS, PKG_NAME_TPLS, RT_LOCATIONS, RT_TPLS
 
 log = logging.getLogger('dhpython')
+parse_dep = re.compile('''[,\s]*
+    (?P<name>[^ ]+)
+    \s*
+    \(?(?P<version>([>=<]{2,}|=)\s*[^\)]+)?\)?
+    \s*
+    (?:\[(?P<arch>[^\]]+)\])?
+    ''', re.VERBOSE).match
 
 
 class DebHelper:
@@ -32,9 +41,12 @@ class DebHelper:
     def __init__(self, options, impl='cpython3'):
         self.options = options
         self.packages = {}
+        self.build_depends = {}
         self.python_version = None
         source_section = True
         binary_package = None
+        build_depends_line = ''
+        inside_bdepends_field = False
         # Note that each DebHelper instance supports ONE interpreter type only
         # it's not possible to mix cpython2, cpython3 and pypy here
         self.impl = impl
@@ -43,6 +55,7 @@ class DebHelper:
             if name != impl:
                 skip_tpl.update(tpls)
         skip_tpl = tuple(skip_tpl)
+        substvar = DEPENDS_SUBSTVARS[impl]
 
         pkgs = options.package
         skip_pkgs = options.no_package
@@ -53,9 +66,12 @@ class DebHelper:
             raise Exception('cannot find debian/control file')
 
         for line in fp:
+            if line.startswith('#'):
+                continue
             if not line.strip():
                 source_section = False
                 binary_package = None
+                inside_depends_field = False
                 continue
             line_l = line.lower()  # field names are case-insensitive
             if binary_package:
@@ -63,10 +79,28 @@ class DebHelper:
                     continue
                 if line_l.startswith('architecture:'):
                     arch = line[13:].strip()
-                    # TODO: if arch doesn't match current architecture:
-                    #del self.packages[binary_package]
-                    self.packages[binary_package]['arch'] = arch
+                    if options.arch is False and arch != 'all' or\
+                       options.arch is True and arch == 'all':
+                        # TODO: check also if arch matches current architecture:
+                        del self.packages[binary_package]
+                    else:
+                        self.packages[binary_package]['arch'] = arch
                     continue
+                if not binary_package.startswith(PKG_NAME_TPLS[impl]):
+                    # package doesn't have common prefix (python-, python3-, pypy-)
+                    # so lets check if Depends contains appropriate substvar
+                    if line_l.startswith('depends:'):
+                        if substvar in line:
+                            continue
+                        inside_depends_field = True
+                    elif inside_depends_field:  # multiline continuation
+                        if not line.startswith((' ', '\t')):
+                            inside_depends_field = False
+                            log.debug('skipping package %s (missing %s in Depends)',
+                                      binary_package, substvar)
+                            del self.packages[binary_package]
+                        elif substvar in line:
+                            inside_depends_field = None
             elif line_l.startswith('package:'):
                 binary_package = line[8:].strip()
                 if skip_tpl and binary_package.startswith(skip_tpl):
@@ -92,6 +126,27 @@ class DebHelper:
                         self.python_version = line[18:].strip()
                 if line_l.startswith('x-python-version:'):
                     self.python_version = line[17:].strip()
+            elif source_section and line_l.startswith(('build-depends:', 'build-depends-indep:')):
+                inside_bdepends_field = True
+                build_depends_line += ',' + line.split(':', 1)[1].strip(', \t\n')
+            elif inside_bdepends_field:  # multiline continuation
+                if not line.startswith((' ', '\t', '#')):
+                    inside_bdepends_field = False
+                elif not line.strip().startswith('#'):
+                    build_depends_line += ',' + line.strip(', \t\n')
+
+        for dep1 in build_depends_line.strip(', \t').split(','):
+            for dep2 in dep1.split('|'):
+                details = parse_dep(dep2)
+                if details:
+                    details = details.groupdict()
+                    if details['arch']:
+                        architectures = details['arch'].split()
+                    else:
+                        architectures = [None]
+                    for arch in architectures:
+                        self.build_depends.setdefault(details['name'],
+                                                      {})[arch] = details['version']
 
         fp.close()
         log.debug('source=%s, binary packages=%s', self.source_name,
@@ -135,14 +190,14 @@ class DebHelper:
                             tpl = tplfile.read()
                         if self.options.compile_all and args:
                             # TODO: should args be checked to contain dir name?
-                            tpl = tpl.replace('#PACKAGE#', '')
+                            tpl = tpl.replace('-p #PACKAGE#', '')
                         else:
                             tpl = tpl.replace('#PACKAGE#', package)
                         tpl = tpl.replace('#ARGS#', i)
                         if tpl not in data and tpl not in new_data:
                             new_data += "\n%s" % tpl
                 if new_data:
-                    data += '\n# Automatically added by dhpython:' +\
+                    data += '\n# Automatically added by {}:'.format(basename(argv[0])) +\
                             '{}\n# End automatically added section\n'.format(new_data)
                     fp = open(fn, 'w', encoding='utf-8')
                     fp.write(data)

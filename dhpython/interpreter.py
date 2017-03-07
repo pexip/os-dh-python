@@ -277,15 +277,15 @@ class Interpreter:
 
         return result
 
-    def parse_public_version(self, path):
-        """Return version assigned to site-packages path."""
+    def parse_public_dir(self, path):
+        """Return version assigned to site-packages path
+        or True is it's unversioned public dir."""
         match = PUBLIC_DIR_RE[self.impl].match(path)
         if match:
             vers = match.groups(0)
-            if vers:
+            if vers and vers[0]:
                 return Version(vers)
-            # PyPy is not versioned
-            return default(self.impl)
+            return True
 
     def should_ignore(self, path):
         """Return True if path is used by another interpreter implementation."""
@@ -419,6 +419,8 @@ class Interpreter:
 
     def check_extname(self, fname, version=None):
         """Return extension file name if file can be renamed."""
+        if not version and not self.version:
+            return
 
         version = Version(version or self.version)
 
@@ -460,12 +462,14 @@ class Interpreter:
         tmp_multiarch = info['multiarch'] or multiarch
 
         result = info['name']
-        if self.impl == 'cpython3' and version >> '3.2' and result.endswith('module'):
+        if result.endswith('module') and result != 'module' and (
+           self.impl == 'cpython3' and version >> '3.2' or
+           self.impl == 'cpython2' and version == '2.7'):
             result = result[:-6]
 
         if tmp_soabi:
             result = "{}.{}".format(result, tmp_soabi)
-            if tmp_multiarch and not (self.impl == 'cpython3' and version << '3.3'):
+            if tmp_multiarch and not (self.impl == 'cpython3' and version << '3.3') and tmp_multiarch not in soabi:
                 result = "{}-{}".format(result, tmp_multiarch)
         elif self.impl == 'cpython2' and version == '2.7' and tmp_multiarch:
             result = "{}.{}".format(result, tmp_multiarch)
@@ -509,6 +513,9 @@ class Interpreter:
                'for i in s.get_config_vars('\
                '"SOABI", "MULTIARCH", "INCLUDEPY", "LIBPL", "LDLIBRARY")))'
         conf_vars = self._execute(cmd, version).split('__SEP__')
+        if conf_vars[1] in conf_vars[0]:
+            # Python >= 3.5 includes MILTIARCH in SOABI
+            conf_vars[0] = conf_vars[0].replace("-%s" % conf_vars[1], '')
         try:
             conf_vars[1] = os.environ['DEB_HOST_MULTIARCH']
         except KeyError:

@@ -1,5 +1,5 @@
 #! /usr/bin/python3
-# Copyright © 2010-2013 Piotr Ożarowski <piotr@debian.org>
+# Copyright © 2010-2015 Piotr Ożarowski <piotr@debian.org>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,12 +21,21 @@
 
 import re
 import sys
+try:
+    from distro_info import DistroInfo  # python3-distro-info package
+except ImportError:
+    DistroInfo = None
 from gzip import decompress
 from os import chdir, mkdir
 from os.path import dirname, exists, isdir, join, split
 from urllib.request import urlopen
 
-SOURCE = 'http://ftp.debian.org/debian/dists/unstable/main/Contents-amd64.gz'
+if '--ubuntu' in sys.argv and DistroInfo:
+    SOURCE = 'http://archive.ubuntu.com/ubuntu/dists/%s/Contents-amd64.gz' % \
+             DistroInfo('ubuntu').devel()
+else:
+    SOURCE = 'http://ftp.debian.org/debian/dists/jessie/main/Contents-amd64.gz'
+
 IGNORED_PKGS = {'python-setuptools', 'python3-setuptools', 'pypy-setuptools'}
 DEFAULTS = {
     'cpython2': [
@@ -35,9 +44,13 @@ DEFAULTS = {
         'wsgiref python (>= 2.5) | python-wsgiref\n',
         'argparse python (>= 2.7) | python-argparse\n',
         # not recognized due to .pth file (egg-info is in PIL/ and not in *-packages/)
-        'pil python-imaging\n'],
+        'pil python-pil\n',
+        'Pillow python-pil\n'],
     'cpython3': [
-        'setuptools python3-pkg-resources\n'],
+        'pil python3-pil\n',
+        'Pillow python3-pil\n',
+        'setuptools python3-pkg-resources\n',
+        'argparse python3 (>= 3.2)\n'],
     'pypy': []
 }
 
@@ -76,20 +89,28 @@ if not exists(cache_fpath):
         fp.write(data)
 else:
     data = open(cache_fpath, 'rb').read()
-data = str(decompress(data), encoding='UTF-8')
+try:
+    data = str(decompress(data), encoding='UTF-8')
+except UnicodeDecodeError as e:  # Ubuntu
+    data = str(decompress(data), encoding='ISO-8859-15')
 
 result = {
     'cpython2': {},
     'cpython3': {},
     'pypy': {}}
 
-is_header = True
+# Contents file doesn't contain comment these days
+is_header = not data.startswith('bin')
 for line in data.splitlines():
     if is_header:
         if line.startswith('FILE'):
             is_header = False
         continue
-    path, desc = line.rsplit(maxsplit=1)
+    try:
+        path, desc = line.rsplit(maxsplit=1)
+    except ValueError:
+        # NOTE(jamespage) some lines in Ubuntu are not parseable.
+        continue
     path = '/' + path.rstrip()
     section, pkg_name = desc.rsplit('/', 1)
     if pkg_name in IGNORED_PKGS:
