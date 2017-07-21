@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from filecmp import cmp as cmpfile
-from os.path import exists, dirname, isdir, islink, join, split, splitext
+from os.path import exists, isdir, islink, join, realpath, split, splitext
 from shutil import rmtree
 from stat import ST_MODE, S_IXUSR, S_IXGRP, S_IXOTH
 from dhpython import MULTIARCH_DIR_TPL
@@ -46,13 +46,10 @@ def fix_locations(package, interpreter, versions, options):
                 # TODO: what about relative symlinks?
                 log.debug('moving files from %s to %s', srcdir, dstdir)
                 share_files(srcdir, dstdir, interpreter, options)
-                parent_dir = '/'.join(srcdir.split('/')[:-1])
-                while parent_dir:
-                    if exists(parent_dir):
-                        if os.listdir(parent_dir):
-                            break
-                        os.rmdir(parent_dir)
-                    parent_dir = dirname(parent_dir)
+                try:
+                    os.removedirs(srcdir)
+                except OSError:
+                    pass
 
         # do the same with debug locations
         dstdir = interpreter.sitedir(package, gdb=True)
@@ -60,13 +57,10 @@ def fix_locations(package, interpreter, versions, options):
             if isdir(srcdir):
                 log.debug('moving files from %s to %s', srcdir, dstdir)
                 share_files(srcdir, dstdir, interpreter, options)
-                parent_dir = '/'.join(srcdir.split('/')[:-1])
-                while parent_dir:
-                    if exists(parent_dir):
-                        if os.listdir(parent_dir):
-                            break
-                        os.rmdir(parent_dir)
-                    parent_dir = dirname(parent_dir)
+                try:
+                    os.removedirs(srcdir)
+                except OSError:
+                    pass
 
 
 def share_files(srcdir, dstdir, interpreter, options):
@@ -76,8 +70,9 @@ def share_files(srcdir, dstdir, interpreter, options):
         if not options.no_ext_rename and splitext(i)[-1] == '.so':
             # try to rename extension here as well (in :meth:`scan` info about
             # Python version is gone)
-            version = interpreter.parse_public_version(srcdir)
-            if version:
+            version = interpreter.parse_public_dir(srcdir)
+            # if version is True it means it's unversioned dist-packages dir
+            if version and version is not True:
                 # note that if ver is empty, default Python version will be used
                 fpath1_orig = fpath1
                 new_name = interpreter.check_extname(i, version)
@@ -95,14 +90,21 @@ def share_files(srcdir, dstdir, interpreter, options):
             # do not rename directories here - all .so files have to be renamed first
             os.renames(fpath1, fpath2)
             continue
-        if isdir(fpath1):
+        if islink(fpath1):
+            # move symlinks without changing them if they point to the same place
+            if not exists(fpath2):
+                os.renames(fpath1, fpath2)
+            elif realpath(fpath1) == realpath(fpath2):
+                os.remove(fpath1)
+        elif isdir(fpath1):
             share_files(fpath1, fpath2, interpreter, options)
         elif cmpfile(fpath1, fpath2, shallow=False):
             os.remove(fpath1)
-        # XXX: check symlinks
 
-    if exists(srcdir) and not os.listdir(srcdir):
-        os.rmdir(srcdir)
+    try:
+        os.removedirs(srcdir)
+    except OSError:
+        pass
 
 
 class Scan:
@@ -125,6 +127,7 @@ class Scan:
 
         self.options = options
         self.result = {'requires.txt': set(),
+                       'egg-info': set(),
                        'nsp.txt': set(),
                        'shebangs': set(),
                        'public_vers': set(),
@@ -138,11 +141,26 @@ class Scan:
                 del dirs[:]
                 continue
 
-            self.current_private_dir = None
-            self.current_pub_version = version = interpreter.parse_public_version(root)
-            if self.current_pub_version:  # i.e. a public site-packages directory
+            self.current_private_dir = self.current_pub_version = None
+            version = interpreter.parse_public_dir(root)
+            if version:
+                self.current_dir_is_public = True
+                if version is True:
+                    version = None
+                else:
+                    self.current_pub_version = version
+            else:
+                self.current_dir_is_public = False
+
+            if self.current_dir_is_public:
                 if root.endswith('-packages'):
-                    self.result['public_vers'].add(version)
+                    if version is not None:
+                        self.result['public_vers'].add(version)
+                    for name in ('test', 'tests'):
+                        if name in dirs:
+                            log.debug('removing dist-packages/%s (too common name)', name)
+                            rmtree(join(root, name))
+                            dirs.remove(name)
             else:
                 self.current_private_dir = self.check_private_dir(root)
                 if not self.current_private_dir:
@@ -216,6 +234,12 @@ class Scan:
                 if fext == 'py' and self.handle_public_module(fpath) is not False:
                     self.current_result['compile'] = True
 
+            if not dirs:
+                try:
+                    os.removedirs(root)
+                except OSError:
+                    pass
+
         log.debug("package %s details = %s", package, self.result)
 
     @property
@@ -230,7 +254,7 @@ class Scan:
     def is_unwanted_file(self, fpath):
         if self.__class__.UNWANTED_FILES.match(fpath):
             return True
-        if self.current_pub_version and self.is_dbg_package\
+        if self.current_dir_is_public and self.is_dbg_package\
                 and self.options.clean_dbg_pkg\
                 and splitext(fpath)[-1][1:] not in ('so', 'h'):
             return True
@@ -268,7 +292,7 @@ class Scan:
         This method is invoked for all .so files in public or private directories.
         """
         path, fname = fpath.rsplit('/', 1)
-        if self.current_pub_version and islink(fpath):
+        if self.current_dir_is_public and islink(fpath):
             # replace symlinks with extensions in dist-packages directory
             dstfpath = fpath
             links = set()
@@ -286,6 +310,7 @@ class Scan:
         if MULTIARCH_DIR_TPL.match(fpath):
             # ignore /lib/i386-linux-gnu/, /usr/lib/x86_64-kfreebsd-gnu/, etc.
             return fpath
+
         new_fn = self.interpreter.check_extname(fname, self.current_pub_version)
         if new_fn:
             # TODO: what about symlinks pointing to this file
@@ -373,6 +398,7 @@ class Scan:
             else:
                 log.info('renaming %s to %s', name, clean_name)
                 os.rename(fpath, join(root, clean_name))
+        self.result['egg-info'].add(join(root, clean_name))
 
     def cleanup(self):
         if self.is_dbg_package and self.options.clean_dbg_pkg:
@@ -381,6 +407,6 @@ class Scan:
             for root, dirs, file_names in os.walk(proot, topdown=False):
                 if '-packages/' in root and not file_names:
                     try:
-                        os.rmdir(root)
+                        os.removedirs(root)
                     except Exception:
                         pass

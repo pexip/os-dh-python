@@ -77,9 +77,14 @@ PYDIST_OVERRIDES_FNAMES = {
 PYDIST_DPKG_SEARCH_TPLS = {
     'cpython2': "*/{}-?*\.egg-info | grep '/python2\../\|/pyshared/'",
     'cpython3': '*python3/*/{}-?*\.egg-info',
-    'pypy': '*pypy/*/{}-?\.egg-info'}
+    'pypy': '*/pypy/dist-packages/{}-?*\.egg-info'}
 
 # DebHelper related
+DEPENDS_SUBSTVARS = {
+    'cpython2': '${python:Depends}',
+    'cpython3': '${python3:Depends}',
+    'pypy': '${pypy:Depends}',
+}
 PKG_NAME_TPLS = {
     'cpython2': ('python-', 'python2.'),
     'cpython3': ('python3-', 'python3.'),

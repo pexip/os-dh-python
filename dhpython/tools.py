@@ -42,7 +42,7 @@ def relpath(target, link):
     """
     t = target.split('/')
     l = link.split('/')
-    while l[0] == t[0]:
+    while l and l[0] == t[0]:
         del l[0], t[0]
     return '/'.join(['..'] * (len(l) - 1) + t)
 
@@ -70,7 +70,7 @@ def move_file(fpath, dstdir):
 def move_matching_files(src, dst, pattern):
     """Move files (preserving path) that match given pattern.
 
-    move_files('foo/bar/', 'foo/baz/', 'spam/.*\.so$')
+    move_matching_files('foo/bar/', 'foo/baz/', 'spam/.*\.so$')
     will move foo/bar/a/b/c/spam/file.so to foo/baz/a/b/c/spam/file.so
     """
     match = re.compile(pattern).search
@@ -78,7 +78,7 @@ def move_matching_files(src, dst, pattern):
         for fn in filenames:
             spath = join(root, fn)
             if match(spath):
-                dpath = join(dst, spath.lstrip(src).lstrip('/'))
+                dpath = join(dst, relpath(spath, src))
                 os.renames(spath, dpath)
 
 
@@ -189,7 +189,7 @@ def remove_ns(interpreter, package, namespaces, versions):
     return result
 
 
-def execute(command, cwd=None, env=None, log_output=None):
+def execute(command, cwd=None, env=None, log_output=None, shell=True):
     """Execute external shell commad.
 
     :param cdw: currennt working directory
@@ -199,7 +199,7 @@ def execute(command, cwd=None, env=None, log_output=None):
         * None if output should be included in the returned dict, or
         * False if output should be redirectored to stdout/stderr
     """
-    args = {'shell': True, 'cwd': cwd, 'env': env}
+    args = {'shell': shell, 'cwd': cwd, 'env': env}
     close = False
     if log_output is False:
         pass
@@ -301,7 +301,7 @@ def pyremove(interpreter, package, vrange):
             site_dirs = interpreter.old_sitedirs(package, version)
             site_dirs.append(interpreter.sitedir(package, version))
             for sdir in site_dirs:
-                files = glob(sdir + details['pattern'])
+                files = glob(sdir + '/' + details['pattern'])
                 for fpath in files:
                     if isdir(fpath):
                         rmtree(fpath)

@@ -33,12 +33,6 @@ debian/rules file example::
  %:
   	dh $@ --with python2,python3 --buildsystem=pybuild
 
-overriding test command with custom build plugin example::
-
- override_dh_auto_test:
- 	PYBUILD_SYSTEM=custom \
- 	PYBUILD_TEST_ARGS="command --with --options {build_dir}/" dh_auto_test
-
 OPTIONS
 =======
   Most options can be set (in addition to command line) via environment
@@ -96,7 +90,7 @@ TESTS
 BUILD SYSTEM ARGUMENTS
 ----------------------
   Additional arguments passed to the build system.
-  --system=custom requires complete command.
+  --system=custom requires complete command in --foo-args parameters.
 
     --before-clean COMMAND
         invoked before the clean command
@@ -157,7 +151,7 @@ DIRECTORIES
   --ext-dest-dir DIR
       set destination directory for .so files
   --ext-pattern PATTERN
-      regular expression for files that should be moved if --ext-destdir is set
+      regular expression for files that should be moved if --ext-dest-dir is set
       [default: `\.so(\.[^/]*)?$`]
   --install-dir DIR
       set installation directory [default: .../dist-packages]
@@ -184,7 +178,7 @@ LIMITATIONS
   --disable ITEMS
         disable action, interpreter, version or any mix of them.
         Note that f.e. python3 and python3-dbg are two different interpreters,
-        --disable python3/test doesn't disable python3-dbg's tests.
+        --disable test/python3 doesn't disable python3-dbg's tests.
 
 disable examples
 ~~~~~~~~~~~~~~~~

@@ -35,7 +35,7 @@ from dhpython.version import supported, default, Version, VersionRange
 from dhpython.pydist import validate as validate_pydist
 from dhpython.fs import fix_locations, Scan
 from dhpython.option import Option
-from dhpython.tools import pyremove
+from dhpython.tools import pyinstall, pyremove
 
 # initialize script
 logging.basicConfig(format='%(levelname).1s: dh_python3 '
@@ -94,15 +94,27 @@ def main():
                       help='exclude items that match given REGEXPR. You may '
                            'use this option multiple times to build up a list'
                            ' of things to exclude.')
+    parser.add_option('--accept-upstream-versions', action='store_true',
+                      default=False, help='accept upstream versions while '
+                      'translating Python dependencies into Debian ones')
     parser.add_option('--depends', action='append',
                       help='translate given requirements into Debian '
                            'dependencies and add them to ${python3:Depends}. '
                            'Use it for missing items in requires.txt.')
+    parser.add_option('--depends-section', action='append',
+                      help='translate requirements from given section into Debian '
+                           'dependencies and add them to ${python3:Depends}')
     parser.add_option('--recommends', action='append',
                       help='translate given requirements into Debian '
                            'dependencies and add them to ${python3:Recommends}')
+    parser.add_option('--recommends-section', action='append',
+                      help='translate requirements from given section into Debian '
+                           'dependencies and add them to ${python3:Recommends}')
     parser.add_option('--suggests', action='append',
                       help='translate given requirements into Debian '
+                           'dependencies and add them to ${python3:Suggests}')
+    parser.add_option('--suggests-section', action='append',
+                      help='translate requirements from given section into Debian '
                            'dependencies and add them to ${python3:Suggests}')
     parser.add_option('--requires', action='append',
                       help='translate requirements from given file into Debian '
@@ -160,18 +172,23 @@ def main():
     except Exception as e:
         log.error('cannot initialize DebHelper: %s', e)
         exit(2)
+    if not dh.packages:
+        log.error('no package to act on (python3-foo or one with ${python3:Depends} in Depends)')
+        # exit(7)
     if not options.vrange and dh.python_version:
         options.vrange = VersionRange(dh.python_version)
 
     interpreter = Interpreter('python3')
     for package, pdetails in dh.packages.items():
-        if options.arch is False and pdetails['arch'] != 'all' or \
-                options.arch is True and pdetails['arch'] == 'all':
-            continue
         log.debug('processing package %s...', package)
         interpreter.debug = package.endswith('-dbg')
 
         if not private_dir:
+            try:
+                pyinstall(interpreter, package, options.vrange)
+            except Exception as err:
+                log.error("%s.pyinstall: %s", package, err)
+                exit(4)
             try:
                 pyremove(interpreter, package, options.vrange)
             except Exception as err:
@@ -180,7 +197,7 @@ def main():
             fix_locations(package, interpreter, SUPPORTED, options)
         stats = Scanner(interpreter, package, private_dir, options).result
 
-        dependencies = Dependencies(package, 'cpython3')
+        dependencies = Dependencies(package, 'cpython3', dh.build_depends)
         dependencies.parse(stats, options)
 
         if stats['ext_vers']:
@@ -200,7 +217,7 @@ def main():
             dh.autoscript(package, 'postinst', 'postinst-py3compile', args)
             dh.autoscript(package, 'prerm', 'prerm-py3clean', '')
             pyclean_added = True
-        for pdir, details in stats['private_dirs'].items():
+        for pdir, details in sorted(stats['private_dirs'].items()):
             if not details.get('compile'):
                 continue
             if not pyclean_added:

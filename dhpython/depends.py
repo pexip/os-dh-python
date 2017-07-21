@@ -19,7 +19,8 @@
 # THE SOFTWARE.
 
 import logging
-from os.path import exists
+from functools import partial
+from os.path import exists, join
 from dhpython import PKG_PREFIX_MAP, MINPYCDEP
 from dhpython.pydist import parse_pydep, guess_dependency
 from dhpython.version import default, supported, VersionRange
@@ -30,9 +31,10 @@ log = logging.getLogger('dhpython')
 class Dependencies:
     """Store relations (dependencies, etc.) between packages."""
 
-    def __init__(self, package, impl='cpython3'):
+    def __init__(self, package, impl='cpython3', bdep=None):
         self.impl = impl
         self.package = package
+        bdep = self.bdep = bdep or {}
         self.is_debug_package = dbgpkg = package.endswith('-dbg')
 
         # TODO: move it to PyPy and CPython{2,3} classes
@@ -51,6 +53,11 @@ class Dependencies:
             self.ipkg_tpl_ma = self.ipkg_tpl + ':any'
             self.ipkg_vtpl_ma = self.ipkg_vtpl + ':any'
 
+        self.python_dev_in_bd = 'python-dev' in bdep or\
+                                'python-all-dev' in bdep or\
+                                'python3-dev' in bdep or\
+                                'python3-all-dev' in bdep
+
         self.depends = set()
         self.recommends = []
         self.suggests = []
@@ -61,17 +68,17 @@ class Dependencies:
     def export_to(self, dh):
         """Fill in debhelper's substvars."""
         prefix = PKG_PREFIX_MAP.get(self.impl, 'misc')
-        for i in self.depends:
+        for i in sorted(self.depends):
             dh.addsubstvar(self.package, '{}:Depends'.format(prefix), i)
-        for i in self.recommends:
+        for i in sorted(self.recommends):
             dh.addsubstvar(self.package, '{}:Recommends'.format(prefix), i)
-        for i in self.suggests:
+        for i in sorted(self.suggests):
             dh.addsubstvar(self.package, '{}:Suggests'.format(prefix), i)
-        for i in self.enhances:
+        for i in sorted(self.enhances):
             dh.addsubstvar(self.package, '{}:Enhances'.format(prefix), i)
-        for i in self.breaks:
+        for i in sorted(self.breaks):
             dh.addsubstvar(self.package, '{}:Breaks'.format(prefix), i)
-        for i in self.rtscripts:
+        for i in sorted(self.rtscripts):
             dh.add_rtupdate(self.package, i)
 
     def __str__(self):
@@ -139,6 +146,13 @@ class Dependencies:
             if maxv >= default(self.impl):
                 self.depend("%s (<< %s)" % (tpl_ma, maxv + 1))
 
+        if self.impl == 'pypy' and stats.get('ext_soabi'):
+            # TODO: make sure alternative is used only for the same extension names
+            # ie. for foo.ABI1.so, foo.ABI2.so, bar.ABI3,so, bar.ABI4.so generate:
+            # pypy-abi-ABI1 | pypy-abi-ABI2, pypy-abi-ABI3 | pypy-abi-ABI4
+            self.depend('|'.join(soabi.replace('-', '-abi-')
+                                 for soabi in sorted(stats['ext_soabi'])))
+
         if stats['ext_vers']:
             # TODO: what about extensions with stable ABI?
             sorted_vers = sorted(stats['ext_vers'])
@@ -155,7 +169,7 @@ class Dependencies:
             self.depend(MINPYCDEP[self.impl])
 
         for ipreter in stats['shebangs']:
-            self.depend("%s%s" % (ipreter, ':any' if self.impl == 'pypy' else ''))
+            self.depend("%s%s" % (ipreter, '' if self.impl == 'pypy' else ':any'))
 
         supported_versions = supported(self.impl)
         default_version = default(self.impl)
@@ -172,15 +186,17 @@ class Dependencies:
             if any(True for i in details.get('shebangs', []) if i.version is None):
                 self.depend(tpl_ma)
 
-            extensions = sorted(details.get('ext_vers', set()))
-            #self.depend('|'.join(vtpl % i for i in extensions))
-            if extensions:
-                self.depend("%s (>= %s~)" % (tpl, extensions[0]))
-                self.depend("%s (<< %s)" % (tpl, extensions[-1] + 1))
-            elif details.get('ext_no_version'):
-                # assume unrecognized extension was built for default interpreter version
-                self.depend("%s (>= %s~)" % (tpl, default_version))
-                self.depend("%s (<< %s)" % (tpl, default_version + 1))
+            extensions = False
+            if self.python_dev_in_bd:
+                extensions = sorted(details.get('ext_vers', set()))
+                #self.depend('|'.join(vtpl % i for i in extensions))
+                if extensions:
+                    self.depend("%s (>= %s~)" % (tpl, extensions[0]))
+                    self.depend("%s (<< %s)" % (tpl, extensions[-1] + 1))
+                elif details.get('ext_no_version'):
+                    # assume unrecognized extension was built for default interpreter version
+                    self.depend("%s (>= %s~)" % (tpl, default_version))
+                    self.depend("%s (<< %s)" % (tpl, default_version + 1))
 
             if details.get('compile'):
                 if self.impl in MINPYCDEP:
@@ -209,28 +225,48 @@ class Dependencies:
                     args += " -X '%s'" % pattern.replace("'", r"'\''")
                 self.rtscript((private_dir, args))
 
+        section_options = {
+            'depends_sec': options.depends_section,
+            'recommends_sec': options.recommends_section,
+            'suggests_sec': options.suggests_section,
+        }
+        guess_deps = partial(guess_dependency, impl=self.impl, bdep=self.bdep,
+                             accept_upstream_versions=options.accept_upstream_versions)
         if options.guess_deps:
             for fn in stats['requires.txt']:
                 # TODO: should options.recommends and options.suggests be
                 # removed from requires.txt?
-                for i in parse_pydep(self.impl, fn):
-                    self.depend(i)
+                deps = parse_pydep(self.impl, fn, bdep=self.bdep, **section_options)
+                [self.depend(i) for i in deps['depends']]
+                [self.recommend(i) for i in deps['recommends']]
+                [self.suggest(i) for i in deps['suggests']]
+            for fpath in stats['egg-info']:
+                with open(fpath, 'r', encoding='utf-8') as fp:
+                    for line in fp:
+                        if line.startswith('Requires: '):
+                            req = line[10:].strip()
+                            self.depend(guess_deps(req=req))
 
         # add dependencies from --depends
         for item in options.depends or []:
-            self.depend(guess_dependency(self.impl, item))
+            self.depend(guess_deps(req=item))
         # add dependencies from --recommends
         for item in options.recommends or []:
-            self.recommend(guess_dependency(self.impl, item))
+            self.recommend(guess_deps(req=item))
         # add dependencies from --suggests
         for item in options.suggests or []:
-            self.suggest(guess_dependency(self.impl, item))
+            self.suggest(guess_deps(req=item))
         # add dependencies from --requires
         for fn in options.requires or []:
-            if not exists(fn):
-                log.warn('cannot find requirements file: %s', fn)
-                continue
-            for i in parse_pydep(self.impl, fn):
-                self.depend(i)
+            fpath = join('debian', self.package, fn)
+            if not exists(fpath):
+                fpath = fn
+                if not exists(fpath):
+                    log.warn('cannot find requirements file: %s', fn)
+                    continue
+            deps = parse_pydep(self.impl, fpath, bdep=self.bdep, **section_options)
+            [self.depend(i) for i in deps['depends']]
+            [self.recommend(i) for i in deps['recommends']]
+            [self.suggest(i) for i in deps['suggests']]
 
         log.debug(self)
