@@ -1,3 +1,9 @@
+dh-python (2.20170125pexip1) pexip; urgency=low
+
+  * Migrate to Stretch
+
+ -- John-Mark Bell <jmb@pexip.com>  Sat, 04 Aug 2018 00:08:59 +0100
+
 dh-python (2.20170125~bpo8+1pexip1) pexip; urgency=low
 
   * Migrate to jessie-backports
