@@ -1,4 +1,4 @@
-# Copyright © 2013 Piotr Ożarowski <piotr@debian.org>
+# Copyright © 2013-2019 Piotr Ożarowski <piotr@debian.org>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -18,11 +18,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+import difflib
 import logging
 import os
 import re
+import sys
 from filecmp import cmp as cmpfile
-from os.path import exists, isdir, islink, join, realpath, split, splitext
+from os.path import lexists, exists, isdir, islink, join, realpath, split, splitext
 from shutil import rmtree
 from stat import ST_MODE, S_IXUSR, S_IXGRP, S_IXOTH
 from dhpython import MULTIARCH_DIR_TPL
@@ -62,29 +64,34 @@ def fix_locations(package, interpreter, versions, options):
                 except OSError:
                     pass
 
+        # move files from /usr/include/pythonX.Y/ to …/pythonX.Ym/
+        srcdir = "debian/%s%s" % (package, interpreter.symlinked_include_dir)
+        if srcdir and isdir(srcdir):
+            dstdir = "debian/%s%s" % (package, interpreter.include_dir)
+            log.debug('moving files from %s to %s', srcdir, dstdir)
+            share_files(srcdir, dstdir, interpreter, options)
+            try:
+                os.removedirs(srcdir)
+            except OSError:
+                pass
+
 
 def share_files(srcdir, dstdir, interpreter, options):
     """Try to move as many files from srcdir to dstdir as possible."""
     for i in os.listdir(srcdir):
         fpath1 = join(srcdir, i)
+        if not lexists(fpath1):  # removed in rename_ext
+            continue
+        if i.endswith('.pyc'):  # f.e. when tests were invoked on installed files
+            os.remove(fpath1)
+            continue
         if not options.no_ext_rename and splitext(i)[-1] == '.so':
             # try to rename extension here as well (in :meth:`scan` info about
             # Python version is gone)
             version = interpreter.parse_public_dir(srcdir)
-            # if version is True it means it's unversioned dist-packages dir
             if version and version is not True:
-                # note that if ver is empty, default Python version will be used
-                fpath1_orig = fpath1
-                new_name = interpreter.check_extname(i, version)
-                if new_name:
-                    fpath1 = join(srcdir, new_name)
-                    if exists(fpath1):
-                        log.warn('destination file exist, '
-                                 'cannot rename %s to %s', fpath1_orig, fpath1)
-                    else:
-                        log.info('renaming %s to %s', fpath1_orig, fpath1)
-                        os.renames(fpath1_orig, fpath1)
-                        i = new_name
+                fpath1 = Scan.rename_ext(fpath1, interpreter, version)
+                i = split(fpath1)[-1]
         fpath2 = join(dstdir, i)
         if not isdir(fpath1) and not exists(fpath2):
             # do not rename directories here - all .so files have to be renamed first
@@ -100,6 +107,16 @@ def share_files(srcdir, dstdir, interpreter, options):
             share_files(fpath1, fpath2, interpreter, options)
         elif cmpfile(fpath1, fpath2, shallow=False):
             os.remove(fpath1)
+        else:
+            # The files differed so we cannot collapse them.
+            log.warn('Paths differ: %s and %s', fpath1, fpath2)
+            if options.verbose and not i.endswith('.so'):
+                with open(fpath1) as fp1:
+                    fromlines = fp1.readlines()
+                with open(fpath2) as fp2:
+                    tolines = fp2.readlines()
+                diff = difflib.unified_diff(fromlines, tolines, fpath1, fpath2)
+                sys.stderr.writelines(diff)
 
     try:
         os.removedirs(srcdir)
@@ -156,9 +173,9 @@ class Scan:
                 if root.endswith('-packages'):
                     if version is not None:
                         self.result['public_vers'].add(version)
-                    for name in ('test', 'tests'):
-                        if name in dirs:
-                            log.debug('removing dist-packages/%s (too common name)', name)
+                    for name in dirs:
+                        if name in ('test', 'tests') or name.startswith('.'):
+                            log.debug('removing dist-packages/%s', name)
                             rmtree(join(root, name))
                             dirs.remove(name)
             else:
@@ -209,7 +226,7 @@ class Scan:
                 fext = splitext(fn)[-1][1:]
                 if fext == 'so':
                     if not self.options.no_ext_rename:
-                        fpath = self.rename_ext(fpath)
+                        fpath = self.rename_ext(fpath, interpreter, version)
                     ver = self.handle_ext(fpath)
                     ver = ver or version
                     if ver:
@@ -286,13 +303,17 @@ class Scan:
             if dpath.startswith(join('debian', self.package, i)):
                 return '/' + i
 
-    def rename_ext(self, fpath):
+    @staticmethod
+    def rename_ext(fpath, interpreter, current_pub_version=None):
         """Add multiarch triplet, etc. Return new name.
 
         This method is invoked for all .so files in public or private directories.
         """
+        # current_pub_version - version parsed from dist-packages (True if unversioned)
+        # i.e. if it's not None - it's a public dist-packages directory
+
         path, fname = fpath.rsplit('/', 1)
-        if self.current_dir_is_public and islink(fpath):
+        if current_pub_version is not None and islink(fpath):
             # replace symlinks with extensions in dist-packages directory
             dstfpath = fpath
             links = set()
@@ -311,7 +332,7 @@ class Scan:
             # ignore /lib/i386-linux-gnu/, /usr/lib/x86_64-kfreebsd-gnu/, etc.
             return fpath
 
-        new_fn = self.interpreter.check_extname(fname, self.current_pub_version)
+        new_fn = interpreter.check_extname(fname, current_pub_version)
         if new_fn:
             # TODO: what about symlinks pointing to this file
             new_fpath = join(path, new_fn)

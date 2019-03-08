@@ -21,7 +21,7 @@
 import logging
 import os
 import re
-from os.path import join, split
+from os.path import exists, join, split
 from dhpython import INTERPRETER_DIR_TPLS, PUBLIC_DIR_RE, OLD_SITE_DIRS
 
 SHEBANG_RE = re.compile(r'''
@@ -309,8 +309,8 @@ class Interpreter:
         >>> i = Interpreter('python')
         >>> i.cache_file('foo.py', Version('3.1'))
         'foo.pyc'
-        >>> i.cache_file('bar/foo.py', '3.4')
-        'bar/__pycache__/foo.cpython-34.pyc'
+        >>> i.cache_file('bar/foo.py', '3.7')
+        'bar/__pycache__/foo.cpython-37.pyc'
         """
         version = Version(version or self.version)
         last_char = 'o' if '-O' in self.options else 'c'
@@ -335,8 +335,8 @@ class Interpreter:
         """Return Python magic tag (used in __pycache__ dir to tag files).
 
         >>> i = Interpreter('python')
-        >>> i.magic_tag(version='3.4')
-        'cpython-34'
+        >>> i.magic_tag(version='3.7')
+        'cpython-37'
         """
         version = Version(version or self.version)
         if self.impl.startswith('cpython') and version << Version('3.2'):
@@ -378,8 +378,8 @@ class Interpreter:
 
         >>> Interpreter('python2.7').include_dir
         '/usr/include/python2.7'
-        >>> Interpreter('python3.4-dbg').include_dir
-        '/usr/include/python3.4dm'
+        >>> Interpreter('python3.7-dbg').include_dir
+        '/usr/include/python3.7dm'
         """
         if self.impl == 'pypy':
             return '/usr/lib/pypy/include'
@@ -402,6 +402,31 @@ class Interpreter:
                 result += 'm'
             elif version == '3.2':
                 result += 'mu'
+        return result
+
+    @property
+    def symlinked_include_dir(self):
+        """Return path to symlinked include directory.
+
+        >>> Interpreter('python3.7').symlinked_include_dir
+        '/usr/include/python3.7'
+        """
+        if self.impl in ('cpython2', 'pypy') or self.debug \
+           or self.version << '3.3':
+            # these interpreters do not provide sumlink,
+            # others provide it in libpython3.X-dev
+            return
+        try:
+            result = self._get_config()[2]
+            if result:
+                if result.endswith('m'):
+                    return result[:-1]
+                else:
+                    # there's include_dir, but no "m"
+                    return
+        except Exception:
+            result = '/usr/include/{}'.format(self.name)
+            log.debug('cannot get include path', exc_info=True)
         return result
 
     @property
@@ -486,11 +511,12 @@ class Interpreter:
 
         >>> Interpreter('python3.1').suggest_pkg_name('foo')
         'python3-foo'
-        >>> Interpreter('python3.4').suggest_pkg_name('foo')
-        'python3-foo'
+        >>> Interpreter('python3.7').suggest_pkg_name('foo_bar')
+        'python3-foo-bar'
         >>> Interpreter('python2.7-dbg').suggest_pkg_name('bar')
         'python-bar-dbg'
         """
+        name = name.replace('_', '-')
         if self.impl == 'pypy':
             return 'pypy-{}'.format(name)
         version = '3' if self.impl == 'cpython3' else ''
@@ -524,9 +550,13 @@ class Interpreter:
 
     def _execute(self, command, version=None, cache=True):
         version = Version(version or self.version)
-        command = "{} -c '{}'".format(self._vstr(version), command.replace("'", "\'"))
+        exe = "{}{}".format(self.path, self._vstr(version))
+        command = "{} -c '{}'".format(exe, command.replace("'", "\'"))
         if cache and command in self.__class__._cache:
             return self.__class__._cache[command]
+        if not exists(exe):
+            raise Exception("cannot execute command due to missing "
+                            "interpreter: %s" % exe)
 
         output = execute(command)
         if output['returncode'] != 0:

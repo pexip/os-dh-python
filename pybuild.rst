@@ -7,7 +7,7 @@ invokes various build systems for requested Python versions in order to build mo
 ----------------------------------------------------------------------------------------------------
 
 :Manual section: 1
-:Author: Piotr Ożarowski, 2012-2013
+:Author: Piotr Ożarowski, 2012-2019
 
 SYNOPSIS
 ========
@@ -16,15 +16,30 @@ SYNOPSIS
 DEBHELPER COMMAND SEQUENCER INTEGRATION
 =======================================
 * build depend on `dh-python`,
-* build depend on `python3-all`, `python-all-dbg`, `pypy`, etc.
-  (for all supported Python interpreters, pybuild will use it to create
-  a list of interpreters to build for),
+* build depend on all supported Python interpreters, pybuild will use it to create
+  a list of interpreters to build for.  
+  Recognized dependencies:
+
+   - `python3-all-dev` - for Python extensions that work with Python 3.X interpreters,
+   - `python3-all-dbg` - as above, add this one if you're building -dbg packages,
+   - `python3-all` - for Python modules that work with Python 3.X interpreters,
+   - `python3-dev` - builds an extension for default Python 3.X interpreter
+     (useful for private extensions, use python3-all-dev for public ones),
+   - `python3` - as above, used if headers files are not needed to build private module,
+   - `python-all-dev` - for Python extensions that work with obsolete Python 2.X interpreters,
+   - `python-all-dbg` - as above, add this one if you're building -dbg packages,
+   - `python-all` - for Python modules that work with obsolete Python 2.X interpreters,
+   - `pypy` - for PyPy 2.X interpreter.
+
 * add `--buildsystem=pybuild` to dh's arguments in debian/rules,
 * if more than one binary package is build:
   add debian/python-foo.install files, or
   `export PYBUILD_NAME=modulename` (modulename will be used to guess binary
   package prefixes), or
   `export PYBUILD_DESTDIR` env. variables in debian/rules
+* add `--with=python3` or `--with=python3,python2,pypy` to dh's arguments in debian/rules
+  (see proper helper's manpage for more details) or add `dh-sequence-python3`
+  (`dh-sequence-python2` for Python 2.X, `dh-sequence-pypy` for PyPy) to Build-Depends
 
 debian/rules file example::
 
@@ -71,6 +86,8 @@ ACTION
         invoke tests for auto-detected build system
     --list-systems
         list available build systems and exit
+    --print
+        print pybuild's internal parameters
 
 TESTS
 -----
@@ -84,8 +101,19 @@ TESTS
         use pytest module in test step, remember to add python-pytest and/or
         python3-pytest to Build-Depends
     --test-tox
-        use tox command in test step, remember to add python-tox
+        use tox command in test step, remember to add tox
         to Build-Depends. Requires tox.ini file
+
+
+testfiles
+~~~~~~~~~
+    Tests are invoked from within build directory to make sure newly built
+    files are tested instead of source files. If test suite requires other files
+    in this directory, you can list them in `debian/pybuild.testfiles` file
+    (you can also use `debian/pybuild-pythonX.testfiles` or
+    `debian/pybuild-pythonX.Y.testfiles`) and files listed there will be copied 
+    before test step and removed before install step.
+    By default only `test` and `tests` directories are copied to build directory.
 
 BUILD SYSTEM ARGUMENTS
 ----------------------
@@ -153,6 +181,11 @@ DIRECTORIES
   --ext-pattern PATTERN
       regular expression for files that should be moved if --ext-dest-dir is set
       [default: `\.so(\.[^/]*)?$`]
+  --ext-sub-pattern PATTERN
+      regular expression for part of path/filename matched in --ext-pattern
+      that should be removed or replaced with --ext-sub-repl
+  --ext-sub-repl PATTERN
+      replacement for matches in --ext-sub-pattern
   --install-dir DIR
       set installation directory [default: .../dist-packages]
   --name NAME

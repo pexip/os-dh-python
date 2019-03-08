@@ -24,7 +24,7 @@ import logging
 import argparse
 import sys
 from os import environ, getcwd, makedirs, remove
-from os.path import abspath, exists, join
+from os.path import abspath, exists, isdir, join
 from shutil import rmtree
 
 logging.basicConfig(format='%(levelname).1s: pybuild '
@@ -34,7 +34,7 @@ log = logging.getLogger('dhpython')
 
 def main(cfg):
     log.debug('cfg: %s', cfg)
-    from dhpython import build
+    from dhpython import build, PKG_PREFIX_MAP
     from dhpython.version import Version, build_sorted, get_requested_versions
     from dhpython.interpreter import Interpreter
     from dhpython.tools import execute, move_matching_files
@@ -60,14 +60,27 @@ def main(cfg):
         env['https_proxy'] = 'https://127.0.0.1:9/'
     elif not env['https_proxy']:
         del env['https_proxy']  # some tools don't like empty var.
-    try:
+    if 'DEB_PYTHON_INSTALL_LAYOUT' not in env:
+        env['DEB_PYTHON_INSTALL_LAYOUT'] = 'deb'
+
+    arch_data = {}
+    if exists('/usr/bin/dpkg-architecture'):
+        res = execute('/usr/bin/dpkg-architecture')
+        for line in res['stdout'].splitlines():
+            key, value = line.strip().split('=', 1)
+            arch_data[key] = value
+
         # Set _PYTHON_HOST_PLATFORM to ensure debugging symbols on, f.e. i386
         # emded a constant name regardless of the 32/64-bit kernel.
         env.setdefault(
             '_PYTHON_HOST_PLATFORM',
-            '{env[DEB_TARGET_ARCH_OS]}-{env[DEB_TARGET_ARCH]}'.format(env=env))
-    except KeyError:
-        pass
+            '{DEB_HOST_ARCH_OS}-{DEB_HOST_ARCH}'.format(**arch_data))
+
+        if arch_data['DEB_BUILD_ARCH'] != arch_data['DEB_HOST_ARCH']:
+            # support cross compiling Python 3.X extensions, see #892931
+            env.setdefault('_PYTHON_SYSCONFIGDATA_NAME',
+                           ('_sysconfigdata_m_{DEB_HOST_ARCH_OS}'
+                            '_{DEB_HOST_MULTIARCH}').format(**arch_data))
 
     if cfg.system:
         certainty = 99
@@ -96,6 +109,19 @@ def main(cfg):
             log.error('cannot detect build system, please use --system option'
                       ' or set PYBUILD_SYSTEM env. variable')
             exit(11)
+
+    if plugin.SUPPORTED_INTERPRETERS is not True:
+        # if versioned interpreter was requested and selected plugin lists
+        # versioned ones as supported: extend list of supported interpreters
+        # with this interpreter
+        tpls = {i for i in plugin.SUPPORTED_INTERPRETERS if '{version}' in i}
+        if tpls:
+            for ipreter in cfg.interpreter:
+                if ipreter[6:9].replace('.', '').isdigit():
+                    ver = ipreter[6:9]
+                    updated = set(tpl.format(version=ver) for tpl in tpls)
+                    updated and plugin.SUPPORTED_INTERPRETERS.update(updated)
+
     for interpreter in cfg.interpreter:
         if plugin.SUPPORTED_INTERPRETERS is not True and interpreter not in plugin.SUPPORTED_INTERPRETERS:
             log.error('interpreter %s not supported by %s', interpreter, plugin)
@@ -107,11 +133,26 @@ def main(cfg):
             print(plugin.NAME)
         exit(0)
 
-    # reversed so that default Python version will be last
     versions = cfg.versions
     if not versions:
-        log.debug('defaulting to all supported Python 3.X versions')
-        versions = list(get_requested_versions('cpython3', available=True))
+        if len(cfg.interpreter) == 1:
+            i = cfg.interpreter[0]
+            if len(i[6:9]) == 3 and i[6:9].replace('.', '').isdigit():
+                # NOTE: python3[6:9] == '3' and we don't want it here,
+                #       ipreter[-3:] doesn't cover pythonX.Y-dbg
+                log.debug('defaulting to version hardcoded in interpreter name')
+                versions = [i[6:9]]
+            else:
+                IMAP = {v: k for k, v in PKG_PREFIX_MAP.items()}
+                if i in IMAP:
+                    versions = build_sorted(get_requested_versions(
+                        IMAP[i], available=True), impl=IMAP[i])
+                if versions and '{version}' not in i:
+                    versions = versions[-1:]  # last one, the default one
+        if not versions:  # still no luck
+            log.debug('defaulting to all supported Python 3.X versions')
+            versions = build_sorted(get_requested_versions(
+                'cpython3', available=True), impl='cpython3')
     versions = [Version(v) for v in versions]
 
     def get_option(name, interpreter=None, version=None, default=None):
@@ -136,11 +177,18 @@ def main(cfg):
 
     def get_args(context, step, version, interpreter):
         i = interpreter.format(version=version)
-        home_dir = '.pybuild/{}_{}'.format(interpreter.format(version='X.Y'), version)
+        ipreter = Interpreter(i)
+
+        home_dir = [ipreter.impl, str(version)]
+        if ipreter.debug:
+            home_dir.append('dbg')
+        if cfg.name:
+            home_dir.append(cfg.name)
+        home_dir = '.pybuild/{}'.format('_'.join(home_dir))
+
         build_dir = get_option('build_dir', interpreter, version,
                                default=join(home_dir, 'build'))
 
-        ipreter = Interpreter(i)
         destdir = context['destdir'].format(version=version, interpreter=i)
         if cfg.name:
             package = ipreter.suggest_pkg_name(cfg.name)
@@ -167,16 +215,21 @@ def main(cfg):
             'home_dir': abspath(home_dir)})
         if interpreter == 'pypy':
             args['install_dir'] = '/usr/lib/pypy/dist-packages/'
+        pp = context['ENV'].get('PYTHONPATH')
+        pp = pp.split(':') if pp else []
         if step in {'build', 'test'}:
-            pp = context['ENV'].get('PYTHONPATH')
-            pp = pp.split(':') if pp else []
             if step == 'test':
                 args['test_dir'] = join(args['destdir'], args['install_dir'].lstrip('/'))
                 if args['test_dir'] not in pp:
                     pp.append(args['test_dir'])
             if args['build_dir'] not in pp:
                 pp.append(args['build_dir'])
-            args['PYTHONPATH'] = ':'.join(pp)
+        # cross compilation support for Python 2.x
+        if (version.major == 2 and
+            arch_data.get('DEB_BUILD_ARCH') != arch_data.get('DEB_HOST_ARCH')):
+            pp.insert(0, ('/usr/lib/python{0}/plat-{1[DEB_HOST_MULTIARCH]}'
+                         ).format(version, arch_data))
+        args['PYTHONPATH'] = ':'.join(pp)
 
         if not exists(args['build_dir']):
             makedirs(args['build_dir'])
@@ -222,13 +275,16 @@ def main(cfg):
                 msg = 'exit code={}: {}'.format(output['returncode'], command)
                 raise Exception(msg)
 
-        fpath = join(args['home_dir'], 'build_dirs_to_rm_before_install')
+        fpath = join(args['home_dir'], 'testfiles_to_rm_before_install')
         if step == 'install' and exists(fpath):
             with open(fpath) as fp:
                 for line in fp:
-                    dpath = join(args['build_dir'], line.strip('\n'))
-                    if exists(dpath):
-                        rmtree(dpath)
+                    path = line.strip('\n')
+                    if exists(path):
+                        if isdir(path):
+                            rmtree(path)
+                        else:
+                            remove(path)
             remove(fpath)
         result = func(context, args)
 
@@ -257,6 +313,8 @@ def main(cfg):
         func = plugin.install
     elif cfg.test_only:
         func = plugin.test
+    elif cfg.print_args:
+        func = plugin.print_args
 
     ### one function for each interpreter at a time mode ###
     if func:
@@ -286,7 +344,9 @@ def main(cfg):
                     ext_destdir = get_option('ext_destdir', i, version)
                     if ext_destdir:
                         move_matching_files(c['destdir'], ext_destdir,
-                                            get_option('ext_pattern', i, version))
+                                            get_option('ext_pattern', i, version),
+                                            get_option('ext_sub_pattern', i, version),
+                                            get_option('ext_sub_repl', i, version))
         exit(0)
 
     ### all functions for interpreters in batches mode ###
@@ -320,7 +380,9 @@ def main(cfg):
                     ext_destdir = get_option('ext_destdir', i, version)
                     if ext_destdir:
                         move_matching_files(c['destdir'], ext_destdir,
-                                            get_option('ext_pattern', i, version))
+                                            get_option('ext_pattern', i, version),
+                                            get_option('ext_sub_pattern', i, version),
+                                            get_option('ext_sub_repl', i, version))
                 if not nocheck and not is_disabled('test', i, version):
                     run(plugin.test, i, version, c)
     except Exception as err:
@@ -362,6 +424,8 @@ def parse_args(argv):
                         help='invoke tests for auto-detected build system')
     action.add_argument('--list-systems', action='store_true',
                         help='list available build systems and exit')
+    action.add_argument('--print', action='append', dest='print_args',
+                        help="print pybuild's internal parameters")
 
     arguments = parser.add_argument_group('BUILD SYSTEM ARGS', '''
         Additional arguments passed to the build system.
@@ -422,6 +486,13 @@ def parse_args(argv):
                       default=environ.get('PYBUILD_EXT_PATTERN', r'\.so(\.[^/]*)?$'),
                       help='regular expression for files that should be moved'
                       ' if --ext-dest-dir is set [default: .so files]')
+    dirs.add_argument('--ext-sub-pattern', action='store', metavar='PATTERN',
+                      default=environ.get('PYBUILD_EXT_SUB_PATTERN'),
+                      help='pattern to change --ext-pattern\'s filename or path')
+    dirs.add_argument('--ext-sub-repl', action='store', metavar='PATTERN',
+                      default=environ.get('PYBUILD_EXT_SUB_REPL'),
+                      help='replacement for match from --ext-sub-pattern,'
+                      ' empty string by default')
     dirs.add_argument('--install-dir', action='store', metavar='DIR',
                       help='installation directory [default: .../dist-packages]')
     dirs.add_argument('--name', action='store',

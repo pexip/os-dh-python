@@ -28,13 +28,25 @@ sub new {
 	$this->enforce_in_source_building();
 
 	if (!$ENV{'PYBUILD_INTERPRETERS'}) {
-		$this->{pydef} = `pyversions -vd 2>/dev/null`;
+		if ($ENV{'DEBPYTHON_DEFAULT'}) {
+			$this->{pydef} = $ENV{'DEBPYTHON_DEFAULT'};}
+		else {
+			$this->{pydef} = `pyversions -vd 2>/dev/null`;}
 		$this->{pydef} =~ s/\s+$//;
-		$this->{pyvers} = `pyversions -vr 2>/dev/null`;
+		if ($ENV{'DEBPYTHON_SUPPORTED'}) {
+			$this->{pyvers} = $ENV{'DEBPYTHON_SUPPORTED'};}
+		else {
+			$this->{pyvers} = `pyversions -vr 2>/dev/null`;}
 		$this->{pyvers} =~ s/\s+$//;
-		$this->{py3def} = `py3versions -vd 2>/dev/null`;
+		if ($ENV{'DEBPYTHON3_DEFAULT'}) {
+			$this->{py3def} = $ENV{'DEBPYTHON3_DEFAULT'};}
+		else {
+			$this->{py3def} = `py3versions -vd 2>/dev/null`;}
 		$this->{py3def} =~ s/\s+$//;
-		$this->{py3vers} = `py3versions -vr 2>/dev/null`;
+		if ($ENV{'DEBPYTHON3_SUPPORTED'}) {
+			$this->{py3vers} = $ENV{'DEBPYTHON3_SUPPORTED'};}
+		else {
+			$this->{py3vers} = `py3versions -vr 2>/dev/null`;}
 		$this->{py3vers} =~ s/\s+$//;
 		$this->{pypydef} = `pypy -c 'from sys import pypy_version_info as i; print("%s.%s" % (i.major, i.minor))' 2>/dev/null`;
 		$this->{pypydef} =~ s/\s+$//;
@@ -93,13 +105,14 @@ sub pybuild_commands {
 		push @options, '--dir', $dir;
 	}
 
+	my @deps;
 	if ($ENV{'PYBUILD_INTERPRETERS'}) {
 		push @result, ['pybuild', "--$step", @options];
 	}
 	else {
 		# get interpreter packages from Build-Depends{,-Indep}:
 		# NOTE: possible problems with alternative/versioned dependencies
-		my @deps = $this->python_build_dependencies();
+		@deps = $this->python_build_dependencies();
 
 		# When depends on python{3,}-setuptools-scm, set
 		# SETUPTOOLS_SCM_PRETEND_VERSION to upstream version
@@ -112,7 +125,21 @@ sub pybuild_commands {
 			my $version = @{$changelog}[0]->get_version();
 			$version =~ s/-[^-]+$//;  # revision
 			$version =~ s/^\d+://;    # epoch
+			$version =~ s/~/-/;       # ignore tilde versions
 			$ENV{'SETUPTOOLS_SCM_PRETEND_VERSION'} = $version;
+		}
+
+		# When depends on python{3,}-pbr, set PBR_VERSION to upstream version
+		# Without this, python-pbr tries to detect current
+		# version from pkg metadata or git tag, which fails for debian tags
+		# (debian/<version>) sometimes.
+		if ((grep /(pypy|python[0-9\.]*)-pbr/, @deps) && !$ENV{'PBR_VERSION'}) {
+			my $changelog = Dpkg::Changelog::Debian->new(range => {"count" => 1});
+			$changelog->load("debian/changelog");
+			my $version = @{$changelog}[0]->get_version();
+			$version =~ s/-[^-]+$//;  # revision
+			$version =~ s/^\d+://;    # epoch
+			$ENV{'PBR_VERSION'} = $version;
 		}
 
 		my @py2opts = ('pybuild', "--$step");
@@ -128,7 +155,7 @@ sub pybuild_commands {
 				push @py2opts, '--test-pytest'}
 			elsif (grep {$_ eq 'python-nose'} @deps and $ENV{'PYBUILD_TEST_NOSE'} ne '0') {
 				push @py2opts, '--test-nose'}
-			if (grep {$_ eq 'python3-tox'} @deps and $ENV{'PYBUILD_TEST_TOX'} ne '0') {
+			if (grep {$_ eq 'tox'} @deps and $ENV{'PYBUILD_TEST_TOX'} ne '0') {
 				push @py3opts, '--test-tox'}
 			elsif (grep {$_ eq 'python3-pytest'} @deps and $ENV{'PYBUILD_TEST_PYTEST'} ne '0') {
 				push @py3opts, '--test-pytest'}
@@ -196,7 +223,10 @@ sub pybuild_commands {
 		}
 	}
 	if (!@result) {
-		die('E: Please add apropriate interpreter package to Build-Depends, see pybuild(1) for details')
+		use Data::Dumper;
+		die('E: Please add apropriate interpreter package to Build-Depends, see pybuild(1) for details.' .
+		    'this: ' . Dumper($this) .
+		    'deps: ' . Dumper(\@deps));
 	}
 	return @result;
 }
@@ -209,7 +239,7 @@ sub python_build_dependencies {
 	if ($c->load('debian/control')) {
 		for my $field (grep /^Build-Depends/, keys %{$c}) {
 			my $builddeps = $c->{$field};
-			while ($builddeps =~ /(?:^|[\s,])((pypy|python)[0-9\.]*(-[^\s,]+)?)(?:[\s,]|$)/g) {
+			while ($builddeps =~ /(?:^|[\s,])((pypy|python)[0-9\.]*(-[^\s,\(]+)?)(?:[\s,\(]|$)/g) {
 				my $dep = $1;
 				$dep =~ s/:any$//;
 				if ($dep) {push @result, $dep};
