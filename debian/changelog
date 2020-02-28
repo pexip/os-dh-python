@@ -1,3 +1,150 @@
+dh-python (3.20190308) unstable; urgency=medium
+
+  * so2pyver: add a fallback to UTF-8 if locale.getdefaultlocale() returns None
+    closes: 923990
+
+ -- Piotr Ożarowski <piotr@debian.org>  Fri, 08 Mar 2019 08:23:50 +0100
+
+dh-python (3.20190307) unstable; urgency=medium
+
+  [ Antoine Beaupré ]
+  * Ignore tilde version numbers which crash setuptools-scm (closes: 915408)
+
+  [ Agustin Henze ]
+  * Use current locale for encoding the output process while checking
+    libpython's version extension file is linked to (closes: 901000, 912909)
+
+    Thanks also to Zack Weinberg for different patch solving this issue
+    in 912909!
+
+  [ Helmut Grohne ]
+  * pybuild:
+    - make it easier to cross-build Python 2 extensions (closes: 901759)
+    - use DEB_HOST_ARCH{,_OS} instead of DEB_TARGET_ARCH{,_OS} (closes: 912892)
+
+    Thanks also to Dima Kogan for patches, including the one adding more
+    debug info.
+
+  [ Samuel Thibault ]
+  * Fix handling broken symlinks while renaming extension files
+    (closes: 903698).
+
+  [ Nicolas Dandrimont ]
+  * Support "Compatible release" version specifiers ("~=") in the requires
+    parser (closes: 913338).
+
+  [ Piotr Ożarowski ]
+  * pybuild.pm: follow python3-tox → tox (unfortunate) rename
+  * dh-python now provides dh-sequence-python3, dh-sequence-python2
+    and dh-sequence-pypy packages (to be used in debhelper >= 12)
+  * Update tests to use 3.7 as default/supported Python 3.X (closes: 914998)
+  * dh_pypy: add namespace support: new options: --namespace, --ignore-namespace
+    and parsing namespace_packages.txt by default (closes: 920899)
+  * dh_python3: move files from /usr/include/python3.X/ to
+    /usr/include/python3.Xm/ for Python 3.X >= 3.3 (closes: 923048)
+  * Standards-Version is 4.3.0 now (no changes needed)
+
+ -- Piotr Ożarowski <piotr@debian.org>  Thu, 07 Mar 2019 22:00:17 +0100
+
+dh-python (3.20180927) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * Enable verbose mode for nose to comply with Debian Policy 4.2.0
+
+  [ Piotr Ożarowski ]
+  * dh_python*:
+    - remove .../dist-packages/.foo directories (.cache, .pytest_cache, etc.)
+    - install debian/python{,3}-foo.bcep files into /usr/share/python{,3}/bcep/ 
+  * dh_python3: generated postinst files will bytecompile for pypy3 if
+    /usr/bin/pypy3compile is available (py3clean will remove pypy3 generated
+    .pyc files so prerm doesn't require any changes).
+    PyPy3 support is still a WIP so pypy3compile errors are ignored for now.
+
+ -- Piotr Ożarowski <piotr@debian.org>  Thu, 27 Sep 2018 22:40:56 +0200
+
+dh-python (3.20180723) unstable; urgency=medium
+
+  * dh-python depends on python3-distutils (as most package that use dh-python
+    would have to depend on it anyway, closes: 894203)
+  * dh_python{2,3}:
+    - fix \.so.* symlink renaming for non-default Python versions
+      (closes: 739500, 903698)
+    - when files cannot be shared between Python versions because of
+      differences, print (in --verbose mode) a unified diff for diagnostic
+      purposes (closes: 801710, thanks to Barry Warsaw for the original patch)
+
+ -- Piotr Ożarowski <piotr@debian.org>  Mon, 23 Jul 2018 14:39:41 +0200
+
+dh-python (3.20180607) experimental; urgency=medium
+
+  [ Scott Kitterman ]
+  * Stop setting minimum python and python3 versions since the minimum version
+    is in all supported releases 
+
+  [ Piotr Ożarowski ]
+  * pybuild: set DEB_PYTHON_INSTALL_LAYOUT to "deb" if it's not set already
+
+ -- Piotr Ożarowski <piotr@debian.org>  Thu, 07 Jun 2018 23:56:25 +0200
+
+dh-python (3.20180326) unstable; urgency=medium
+
+  * pybuild: fix cross compiling stuff to use dpkg-architecture if available
+    (and move dpkg-dev to Suggests)
+  * Add python3-distutils to Recommends to make the transition easier
+
+ -- Piotr Ożarowski <piotr@debian.org>  Mon, 26 Mar 2018 21:19:20 +0200
+
+dh-python (3.20180318) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * d/copyright: Use https protocol in Format field
+  * d/changelog: Remove trailing whitespaces
+
+  [ Ben Finney ]
+  * Ignore leading and trailing whitespace from ‘pydist’ lines when parsing
+    (closes: 860139)
+
+  [ Piotr Ożarowski ]
+  * pybuild.pm: add support for DEBPYTHON{3,}_{DEFAULT,SUPPORTED} env. vars
+    (closes: 861132)
+  * pybuild:
+    - support cross compiling Python 3.X extensions (i.e. set
+      _PYTHON_SYSCONFIGDATA_NAME env. and add dpkg-dev to Depends
+      closes: 892931)
+  * Standards-Version is 4.1.3 now (no changes needed)
+
+ -- Piotr Ożarowski <piotr@debian.org>  Sun, 18 Mar 2018 19:52:49 +0100
+
+dh-python (3.20180313) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * When depends on python{3,}-pbr, set PBR_VERSION to upstream version
+
+  [ Dirk Thomas ]
+  * Use relative install-scripts path in pybuild's distutils build system
+
+  [ Piotr Ożarowski ]
+  * dh_python2: rewrite /usr/bin/python shebangs to /usr/bin/python2
+  * pybuild:
+    * copy files listed in debian/pybuild.testfiles to build directory before
+      test step and remove them before install step
+    * improve support for building multiple (Python) distributions at once
+      (PYBUILD_NAME=foo dh $@ -Spybuild --sourcedirectory=dir1;
+       PYBUILD_NAME=bar dh $@ -Spybuild --sourcedirectory=dir2)
+    * add --print option to print pybuild's internal parameters
+      (example: `pybuild --print build_dir --interpreter python3`)
+    * add --ext-sub-pattern and --ext-sub-repl options (can be used f.e. to
+      move some files from dist-packages to private directory)
+    * if --name contains underscore, replace it with dash in suggested package
+      names
+    * try a bit harder to guess (if not explicitly requested) interpreter
+      versions to build for, especially if versioned interpreter was requested
+
+    WARNING: pybuild's internal dir names were changed, use --print if you
+    really have to use these paths in debian/rules
+
+ -- Piotr Ożarowski <piotr@debian.org>  Tue, 13 Mar 2018 23:09:42 +0100
+
 dh-python (2.20170125pexip1) pexip; urgency=low
 
   * Migrate to Stretch
@@ -107,7 +254,7 @@ dh-python (2.20151103) unstable; urgency=medium
       during test stage (closes: 803242)
   * Move libdpkg-perl from Depends to Suggests. python3 still depends on
     dh-python and we don't want to pull Perl when python3 is intalled
-    (libdpkg-perl is pulled in by debhelper anyway) 
+    (libdpkg-perl is pulled in by debhelper anyway)
   * Add README.rst file
 
  -- Piotr Ożarowski <piotr@debian.org>  Tue, 03 Nov 2015 23:20:36 +0100
@@ -128,7 +275,7 @@ dh-python (2.20150728) unstable; urgency=medium
 
   * dh_python3: fix module renaming in Python >= 3.5 (SOABI now includes
     MULTIARCH triplet)
-  * pybuild.pm: 
+  * pybuild.pm:
     - fix parsing Build-Depends with comments (closes: 793609, thanks to James
       McCoy for the patch) - new build/runtime dependency: libdpkg-perl
     - enable --test-{nose,pytest,tox} if appropriate build dependency is set
@@ -136,7 +283,7 @@ dh-python (2.20150728) unstable; urgency=medium
     - allow localhost connections (via no_proxy=localhost, thanks to
       Dimitri John Ledkov)
     - do not forward empty http{,s}_proxy env. vars - some tools do not like it
-  * dh_python{2,3} and dh_pypy: skip packages with private modules that 
+  * dh_python{2,3} and dh_pypy: skip packages with private modules that
     do not have apropriate ${*:Depends} substvar in Depends
     (-p/-N in debian/rules to select the right package is no longer needed,
     now you can select the right tool by adding substvar)
@@ -215,7 +362,7 @@ dh-python (1.20141026-1) unstable; urgency=medium
   * Add argparse to Python 3.X's dist fallback (closes: 763200)
   * Ensure that Depends and the likes are written in a stable
     order (closes: 759231, thanks to Jérémy Bobbio for the patch)
-  * Remove dh_python2 diversions while upgrading from bpo package 
+  * Remove dh_python2 diversions while upgrading from bpo package
   * Standards-Version bumped to 3.9.6 (no changes needed)
 
  -- Piotr Ożarowski <piotr@debian.org>  Sun, 26 Oct 2014 23:32:57 +0100

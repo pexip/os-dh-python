@@ -60,11 +60,20 @@ versioned dependencies (and assuming that the *pypy-bar* package provides
 the *pybar* Python module), in most cases it will be sufficient to put the line
 ``pybar pypy-bar; PEP386`` into either of the above files.
 
+namespace feature
+~~~~~~~~~~~~~~~~~
+dh_pypy parses Egg's namespace_packages.txt files (in addition to
+--namespace command line argument(s)) and drops empty __init__.py files from
+binary package. pypycompile will regenerate them at install time and pypyclean
+will remove them at uninstall time (if they're no longer used in installed
+packages). It's still a good idea to provide __init__.py file in one of
+binary packages (even if all other packages use this feature).
+
 private dirs
 ~~~~~~~~~~~~
 `/usr/share/foo`, `/usr/share/games/foo`, `/usr/lib/foo` and
 `/usr/lib/games/foo` private directories are scanned for Python files by
-default (where `foo` is binary package name). If your package is shipping
+default (where `foo` is binary package name). If your package ships
 Python files in some other directory, add another dh_pypy call in debian/rules
 with directory name as an argument - you can use different set of options in
 this call. If you need to change options for a private directory that is
