@@ -65,15 +65,16 @@ def fix_locations(package, interpreter, versions, options):
                     pass
 
         # move files from /usr/include/pythonX.Y/ to …/pythonX.Ym/
-        srcdir = "debian/%s%s" % (package, interpreter.symlinked_include_dir)
-        if srcdir and isdir(srcdir):
-            dstdir = "debian/%s%s" % (package, interpreter.include_dir)
-            log.debug('moving files from %s to %s', srcdir, dstdir)
-            share_files(srcdir, dstdir, interpreter, options)
-            try:
-                os.removedirs(srcdir)
-            except OSError:
-                pass
+        if interpreter.symlinked_include_dir:
+            srcdir = "debian/%s%s" % (package, interpreter.symlinked_include_dir)
+            if srcdir and isdir(srcdir):
+                dstdir = "debian/%s%s" % (package, interpreter.include_dir)
+                log.debug('moving files from %s to %s', srcdir, dstdir)
+                share_files(srcdir, dstdir, interpreter, options)
+                try:
+                    os.removedirs(srcdir)
+                except OSError:
+                    pass
 
 
 def share_files(srcdir, dstdir, interpreter, options):
@@ -182,8 +183,7 @@ class Scan:
                 self.current_private_dir = self.check_private_dir(root)
                 if not self.current_private_dir:
                     # i.e. not a public dir and not a private dir
-                    is_bin_dir = self.is_bin_dir(root)
-                    if is_bin_dir:
+                    if self.is_bin_dir(root):
                         self.handle_bin_dir(root, file_names)
                     else:  # not a public, private or bin directory
                         # continue with a subdirectory

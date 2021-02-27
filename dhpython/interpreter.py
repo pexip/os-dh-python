@@ -151,9 +151,7 @@ class Interpreter:
             return self.name
         version = version or self.version or ''
         if consider_default_ver and (not version or version == self.default_version):
-            version = '3' if self.impl == 'cpython3' else ''
-        elif isinstance(version, Version) and version == Version(major=2):
-            version = ''  # do not promote /usr/bin/python2
+            version = '3' if self.impl == 'cpython3' else '2'
         if self.debug:
             return 'python{}-dbg'.format(version)
         return self.name + str(version)
@@ -309,8 +307,8 @@ class Interpreter:
         >>> i = Interpreter('python')
         >>> i.cache_file('foo.py', Version('3.1'))
         'foo.pyc'
-        >>> i.cache_file('bar/foo.py', '3.7')
-        'bar/__pycache__/foo.cpython-37.pyc'
+        >>> i.cache_file('bar/foo.py', '3.8')          # doctest: +SKIP
+        'bar/__pycache__/foo.cpython-38.pyc'
         """
         version = Version(version or self.version)
         last_char = 'o' if '-O' in self.options else 'c'
@@ -335,8 +333,8 @@ class Interpreter:
         """Return Python magic tag (used in __pycache__ dir to tag files).
 
         >>> i = Interpreter('python')
-        >>> i.magic_tag(version='3.7')
-        'cpython-37'
+        >>> i.magic_tag(version='3.8')                 # doctest: +SKIP
+        'cpython-38'
         """
         version = Version(version or self.version)
         if self.impl.startswith('cpython') and version << Version('3.2'):
@@ -378,8 +376,8 @@ class Interpreter:
 
         >>> Interpreter('python2.7').include_dir
         '/usr/include/python2.7'
-        >>> Interpreter('python3.7-dbg').include_dir
-        '/usr/include/python3.7dm'
+        >>> Interpreter('python3.8-dbg').include_dir   # doctest: +SKIP
+        '/usr/include/python3.8d'
         """
         if self.impl == 'pypy':
             return '/usr/lib/pypy/include'
@@ -393,12 +391,16 @@ class Interpreter:
         result = '/usr/include/{}'.format(self.name)
         version = self.version
         if self.debug:
-            if version << '3.3':
+            if version >= '3.8':
+                result += 'd'
+            elif version << '3.3':
                 result += '_d'
             else:
                 result += 'dm'
         else:
-            if version >> '3.2':
+            if version >= '3.8':
+                pass
+            elif version >> '3.2':
                 result += 'm'
             elif version == '3.2':
                 result += 'mu'
@@ -406,14 +408,10 @@ class Interpreter:
 
     @property
     def symlinked_include_dir(self):
-        """Return path to symlinked include directory.
-
-        >>> Interpreter('python3.7').symlinked_include_dir
-        '/usr/include/python3.7'
-        """
+        """Return path to symlinked include directory."""
         if self.impl in ('cpython2', 'pypy') or self.debug \
-           or self.version << '3.3':
-            # these interpreters do not provide sumlink,
+           or self.version >> '3.7' or self.version << '3.3':
+            # these interpreters do not provide symlink,
             # others provide it in libpython3.X-dev
             return
         try:
@@ -468,7 +466,7 @@ class Interpreter:
             return
         if info['debug'] and self.debug is False:
             # do not change Python 2.X extensions already marked as debug
-            # (the other way arround is acceptable)
+            # (the other way around is acceptable)
             return
         if info['soabi'] and info['multiarch']:
             # already tagged, nothing we can do here
@@ -511,7 +509,7 @@ class Interpreter:
 
         >>> Interpreter('python3.1').suggest_pkg_name('foo')
         'python3-foo'
-        >>> Interpreter('python3.7').suggest_pkg_name('foo_bar')
+        >>> Interpreter('python3.8').suggest_pkg_name('foo_bar')
         'python3-foo-bar'
         >>> Interpreter('python2.7-dbg').suggest_pkg_name('bar')
         'python-bar-dbg'

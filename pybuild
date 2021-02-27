@@ -51,6 +51,7 @@ def main(cfg):
     env = environ.copy()
     # set some defaults in environ to make the build reproducible
     env.setdefault('LC_ALL', 'C.UTF-8')
+    env.setdefault('CCACHE_DIR', abspath('.pybuild/ccache'))
     env.setdefault('no_proxy', 'localhost')
     if 'http_proxy' not in env:
         env['http_proxy'] = 'http://127.0.0.1:9/'
@@ -72,14 +73,15 @@ def main(cfg):
 
         # Set _PYTHON_HOST_PLATFORM to ensure debugging symbols on, f.e. i386
         # emded a constant name regardless of the 32/64-bit kernel.
-        env.setdefault(
-            '_PYTHON_HOST_PLATFORM',
-            '{DEB_HOST_ARCH_OS}-{DEB_HOST_ARCH}'.format(**arch_data))
+        host_platform = '{DEB_HOST_ARCH_OS}-{DEB_HOST_ARCH}'.format(**arch_data)
+        # it's not called amd64 in Python
+        host_platform = host_platform.replace('amd64', 'x86_64')
+        env.setdefault('_PYTHON_HOST_PLATFORM', host_platform)
 
         if arch_data['DEB_BUILD_ARCH'] != arch_data['DEB_HOST_ARCH']:
             # support cross compiling Python 3.X extensions, see #892931
             env.setdefault('_PYTHON_SYSCONFIGDATA_NAME',
-                           ('_sysconfigdata_m_{DEB_HOST_ARCH_OS}'
+                           ('_sysconfigdata__{DEB_HOST_ARCH_OS}'
                             '_{DEB_HOST_MULTIARCH}').format(**arch_data))
 
     if cfg.system:
@@ -215,7 +217,8 @@ def main(cfg):
             'home_dir': abspath(home_dir)})
         if interpreter == 'pypy':
             args['install_dir'] = '/usr/lib/pypy/dist-packages/'
-        pp = context['ENV'].get('PYTHONPATH')
+        env = dict(args.get('ENV', {}))
+        pp = env.get('PYTHONPATH', context['ENV'].get('PYTHONPATH'))
         pp = pp.split(':') if pp else []
         if step in {'build', 'test'}:
             if step == 'test':
@@ -229,7 +232,18 @@ def main(cfg):
             arch_data.get('DEB_BUILD_ARCH') != arch_data.get('DEB_HOST_ARCH')):
             pp.insert(0, ('/usr/lib/python{0}/plat-{1[DEB_HOST_MULTIARCH]}'
                          ).format(version, arch_data))
-        args['PYTHONPATH'] = ':'.join(pp)
+        env['PYTHONPATH'] = ':'.join(pp)
+        # cross compilation support for Python <= 3.8 (see above)
+        if version.major == 3:
+            name = '_PYTHON_SYSCONFIGDATA_NAME'
+            value = env.get(name, context['ENV'].get(name, ''))
+            if version << '3.8' and value.startswith('_sysconfigdata_')\
+               and not value.startswith('_sysconfigdata_m'):
+                value = env[name] = "_sysconfigdata_m%s" % value[15:]
+            # update default from main() for -dbg interpreter
+            if value and ipreter.debug and not value.startswith('_sysconfigdata_d'):
+                env[name] = "_sysconfigdata_d%s" % value[15:]
+        args['ENV'] = env
 
         if not exists(args['build_dir']):
             makedirs(args['build_dir'])
@@ -256,11 +270,9 @@ def main(cfg):
     def run(func, interpreter, version, context):
         step = func.__func__.__name__
         args = get_args(context, step, version, interpreter)
-        if 'PYTHONPATH' in args:
-            env = dict(context['ENV'])
-            env['PYTHONPATH'] = args['PYTHONPATH']
-        else:
-            env = context['ENV']
+        env = dict(context['ENV'])
+        if 'ENV' in args:
+            env.update(args['ENV'])
 
         before_cmd = get_option('before_{}'.format(step), interpreter, version)
         if before_cmd:
@@ -321,6 +333,7 @@ def main(cfg):
         step = func.__func__.__name__
         if step == 'test' and nocheck:
             exit(0)
+        failure = False
         for i in cfg.interpreter:
             ipreter = Interpreter(interpreter.format(version=versions[0]))
             iversions = build_sorted(versions, impl=ipreter.impl)
@@ -339,7 +352,11 @@ def main(cfg):
                 except Exception as err:
                     log.error('%s: plugin %s failed with: %s',
                               step, plugin.NAME, err, exc_info=cfg.verbose)
-                    exit(13)
+                    # try to build/test other interpreters/versions even if
+                    # one of them fails to make build logs more verbose:
+                    failure = True
+                    if step not in ('build', 'test'):
+                        exit(13)
                 if step == 'install':
                     ext_destdir = get_option('ext_destdir', i, version)
                     if ext_destdir:
@@ -347,6 +364,9 @@ def main(cfg):
                                             get_option('ext_pattern', i, version),
                                             get_option('ext_sub_pattern', i, version),
                                             get_option('ext_sub_repl', i, version))
+        if failure:
+            # exit with a non-zero return code if at least one build/test failed
+            exit(13)
         exit(0)
 
     ### all functions for interpreters in batches mode ###
@@ -465,6 +485,9 @@ def parse_args(argv):
     tests.add_argument('--test-nose', action='store_true',
                        default=environ.get('PYBUILD_TEST_NOSE') == '1',
                        help='use nose module in --test step')
+    tests.add_argument('--test-nose2', action='store_true',
+                       default=environ.get('PYBUILD_TEST_NOSE2') == '1',
+                       help='use nose2 module in --test step')
     tests.add_argument('--test-pytest', action='store_true',
                        default=environ.get('PYBUILD_TEST_PYTEST') == '1',
                        help='use pytest module in --test step')
@@ -524,7 +547,7 @@ def parse_args(argv):
             versions.extend(version.split())
         args.versions = versions
 
-    if args.test_nose or args.test_pytest or args.test_tox\
+    if args.test_nose or args.test_nose2 or args.test_pytest or args.test_tox\
        or args.system == 'custom':
         args.custom_tests = True
     else:
