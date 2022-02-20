@@ -10,7 +10,7 @@ package Debian::Debhelper::Buildsystem::pybuild;
 use strict;
 use Dpkg::Control;
 use Dpkg::Changelog::Debian;
-use Debian::Debhelper::Dh_Lib qw(error doit);
+use Debian::Debhelper::Dh_Lib qw(%dh error doit);
 use base 'Debian::Debhelper::Buildsystem';
 
 sub DESCRIPTION {
@@ -105,6 +105,10 @@ sub pybuild_commands {
 		push @options, '--dir', $dir;
 	}
 
+	if (not grep {$_ eq '--verbose'} @options and $dh{QUIET}) {
+		push @options, '--quiet';
+	}
+
 	my @deps;
 	if ($ENV{'PYBUILD_INTERPRETERS'}) {
 		push @result, ['pybuild', "--$step", @options];
@@ -146,7 +150,7 @@ sub pybuild_commands {
 		my @py3opts = ('pybuild', "--$step");
 		my @pypyopts = ('pybuild', "--$step");
 
-		if ($step == 'test' and $ENV{'PYBUILD_TEST_PYTEST'} ne '1' and
+		if ($step eq 'test' and $ENV{'PYBUILD_TEST_PYTEST'} ne '1' and
 		       			$ENV{'PYBUILD_TEST_NOSE2'} ne '1' and
 		       			$ENV{'PYBUILD_TEST_NOSE'} ne '1' and
 		       			$ENV{'PYBUILD_TEST_TOX'} ne '1') {
@@ -245,7 +249,7 @@ sub python_build_dependencies {
 	if ($c->load('debian/control')) {
 		for my $field (grep /^Build-Depends/, keys %{$c}) {
 			my $builddeps = $c->{$field};
-			while ($builddeps =~ /(?:^|[\s,])((pypy|python)[0-9\.]*(-[^\s,\(]+)?)(?:[\s,\(]|$)/g) {
+			while ($builddeps =~ /(?:^|[\s,])((pypy|python|tox)[0-9\.]*(-[^\s,\(]+)?)(?:[\s,\(]|$)/g) {
 				my $dep = $1;
 				$dep =~ s/:any$//;
 				if ($dep) {push @result, $dep};

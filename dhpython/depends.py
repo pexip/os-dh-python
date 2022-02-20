@@ -22,7 +22,7 @@ import logging
 from functools import partial
 from os.path import exists, join
 from dhpython import PKG_PREFIX_MAP, MINPYCDEP
-from dhpython.pydist import parse_pydep, guess_dependency
+from dhpython.pydist import parse_pydep, parse_requires_dist, guess_dependency
 from dhpython.version import default, supported, VersionRange
 
 log = logging.getLogger('dhpython')
@@ -186,7 +186,7 @@ class Dependencies:
                     log.info('dependency on %s (from shebang) ignored'
                              ' - it\'s not supported anymore', vtpl % v)
             # /usr/bin/python{,3} shebang → add python{,3} to Depends
-            if any(True for i in details.get('shebangs', []) if i.version is None):
+            if any(True for i in details.get('shebangs', []) if i.version is None or i.version.minor is None):
                 self.depend(tpl_ma)
 
             extensions = False
@@ -249,6 +249,12 @@ class Dependencies:
                         if line.startswith('Requires: '):
                             req = line[10:].strip()
                             self.depend(guess_deps(req=req))
+            for fpath in stats['dist-info']:
+                deps = parse_requires_dist(self.impl, fpath, bdep=self.bdep,
+                                           **section_options)
+                [self.depend(i) for i in deps['depends']]
+                [self.recommend(i) for i in deps['recommends']]
+                [self.suggest(i) for i in deps['suggests']]
 
         # add dependencies from --depends
         for item in options.depends or []:

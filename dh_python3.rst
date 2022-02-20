@@ -40,10 +40,12 @@ NOTES
 
 dependencies
 ~~~~~~~~~~~~
-dh_python3 tries to translate Python dependencies from the `requires.txt` file
-to Debian dependencies. In many cases, this works without any additional
-configuration because dh_python3 comes with a build-in mapping of Python module
-names to Debian packages that is periodically regenerated from the Debian
+dh_python3 tries to translate Python dependencies from `Requires-Dist`
+entries in `dist-info` or `requires.txt` contents in `egg-info` to
+Debian dependencies.
+In many cases, this works without any additional configuration because
+dh_python3 comes with a build-in mapping of Python module names to
+Debian packages that is periodically regenerated from the Debian
 archive. By default, the version information in the Python dependencies is
 discarded. If you want dh_python3 to generate more strict dependencies (e.g. to
 avoid ABI problems), or if the automatic mapping does not work correctly for
@@ -93,7 +95,7 @@ pyinstall files
 Files listed in debian/pkg.pyinstall file will be installed as public modules
 (i.e. into .../dist-packages/ directory) for all requested Python versions.
 
-Syntax: ``path/to/file [VERSION_RANGE] [NAMESPACE]``
+Syntax: ``path/to/file [NAMESPACE] [VERSION_RANGE]``
 
 debian directory is automatically removed from the path, so you can place your
 files in debian/ directory and install them from this location (if you want to
@@ -192,22 +194,29 @@ OPTIONS
   Python dependencies into Debian ones
 
 --depends=DEPENDS	translate given requirements into Debian dependencies
-  and add them to ${python3:Depends}. Use it for missing items in requires.txt
+  and add them to ${python3:Depends}. Use it for missing items in
+  `requires.txt` / `Requires-Dist`.
 
---depends-section=SECTION	translate requirements from given sections of
-  requres.txt file into Debian dependencies and add them to ${python3:Depends}.
+--depends-section=SECTION	translate requirements from given extra
+  sections of `requres.txt` / `Requires-Dist` into Debian dependencies
+  and add them to ${python3:Depends}. May be repeated for multiple
+  sections.
 
 --recommends=RECOMMENDS		translate given requirements into Debian dependencies
   and add them to ${python3:Recommends}
 
---recommends-section=SECTION	translate requirements from given sections of
-  requres.txt file into Debian dependencies and add them to ${python3:Recommends}.
+--recommends-section=SECTION	translate requirements from given extra
+  sections of `requires.txt` / `Requires-Dist` into Debian dependencies
+  and add them to ${python3:Recommends}. May be repeated for multiple
+  sections.
 
 --suggests=SUGGESTS	translate given requirements into Debian dependencies
   and add them to ${python3:Suggests}
 
---suggests-section=SECTION	translate requirements from given sections of
-  requres.txt file into Debian dependencies and add them to ${python3:Suggests}.
+--suggests-section=SECTION	translate requirements from given extra
+  sections of `requires.txt` / `Requires-Dist` into Debian dependencies
+  and add them to ${python3:Suggests}. May be repeated for multiple
+  sections.
 
 --requires=FILENAME	translate requirements from given file(s) into Debian
   dependencies and add them to ${python3:Depends}

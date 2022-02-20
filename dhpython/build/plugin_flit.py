@@ -19,14 +19,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+from fnmatch import fnmatch
+from pathlib import Path
+import csv
 import logging
-from os.path import exists, isdir, join
 import os
 import os.path as osp
-from pathlib import Path
 import shutil
 try:
-    import toml
+    import tomli
 except ModuleNotFoundError:
     # Plugin still works, only needed for autodetection
     pass
@@ -35,7 +36,7 @@ try:
 except ImportError:
     Installer = object
 
-from dhpython.build.base import Base
+from dhpython.build.base import Base, shell_command
 
 log = logging.getLogger('dhpython')
 
@@ -72,11 +73,26 @@ class DebianInstaller(Installer):
 
         scripts = self.ini_info.entrypoints.get('console_scripts', {})
         if scripts:
-            self.install_scripts(scripts, dirs['scripts'])
             log.info("Installing scripts to %s", dirs['scripts'])
+            self.install_scripts(scripts, dirs['scripts'])
 
-        self.write_dist_info(dirs['purelib'])
         log.info("Writing dist-info %s", dirs['purelib'])
+        self.write_dist_info(dirs['purelib'])
+        # Remove direct_url.json - contents are not useful or reproduceable
+        for path in Path(dirs['purelib']).glob("*.dist-info/direct_url.json"):
+            path.unlink()
+        # Remove build path from RECORD files
+        for path in Path(dirs['purelib']).glob("*.dist-info/RECORD"):
+            with open(path) as f:
+                reader = csv.reader(f)
+                records = list(reader)
+            with open(path, 'w') as f:
+                writer = csv.writer(f)
+                for path, hash_, size in records:
+                    path = path.replace(destdir, '')
+                    if fnmatch(path, "*.dist-info/direct_url.json"):
+                        continue
+                    writer.writerow([path, hash_, size])
 
 
 class BuildSystem(Base):
@@ -93,7 +109,7 @@ class BuildSystem(Base):
         This method uses cls.{REQUIRED}_FILES (pyroject.toml) as well as
         checking to see if build-backend is set to flit_core.buildapi.
 
-        Score is 95 if both are present (to allow manually setting distutils to
+        Score is 85 if both are present (to allow manually setting distutils to
         score higher if set).
 
         :return: 0 <= certainty <= 100
@@ -104,10 +120,11 @@ class BuildSystem(Base):
 
         result = super().detect(context)
         try:
-            pyproject = toml.decoder.load('pyproject.toml')
+            with open('pyproject.toml', 'rb') as f:
+                pyproject = tomli.load(f)
             if pyproject.get('build-system', {}).get('build-backend') == \
                     'flit_core.buildapi':
-                result += 45
+                result += 35
             else:
                 # Not a flit built package
                 result = 0
@@ -123,10 +140,10 @@ class BuildSystem(Base):
 
     def clean(self, context, args):
         super().clean(context, args)
-        if exists(args['interpreter'].binary()):
+        if osp.exists(args['interpreter'].binary()):
             log.debug("removing '%s' (and everything under it)",
                       args['build_dir'])
-            isdir(args['build_dir']) and shutil.rmtree(args['build_dir'])
+            osp.isdir(args['build_dir']) and shutil.rmtree(args['build_dir'])
         return 0  # no need to invoke anything
 
     def configure(self, context, args):
@@ -150,3 +167,7 @@ class BuildSystem(Base):
                                           args['destdir'],
                                           args['install_dir'])
         return 0  # Not needed for flit'
+
+    @shell_command
+    def test(self, context, args):
+        return super().test(context, args)
