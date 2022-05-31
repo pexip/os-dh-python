@@ -104,6 +104,8 @@ class Base:
     OPTIONAL_FILES = {}
     SUPPORTED_INTERPRETERS = {'python', 'python3', 'python-dbg', 'python3-dbg',
                               'python{version}', 'python{version}-dbg'}
+    # files and directories to remove during clean step (other than .pyc):
+    CLEAN_FILES = {'.pytest_cache', '.coverage'}
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -114,9 +116,9 @@ class Base:
     @classmethod
     def is_usable(cls):
         for command in cls.REQUIRED_COMMANDS:
-            proces = Popen(['which', command], stdout=PIPE, stderr=PIPE)
-            out, err = proces.communicate()
-            if proces.returncode != 0:
+            process = Popen(['which', command], stdout=PIPE, stderr=PIPE)
+            out, err = process.communicate()
+            if process.returncode != 0:
                 raise Exception("missing command: %s" % command)
 
     def detect(self, context):
@@ -165,6 +167,19 @@ class Base:
                 except Exception:
                     log.debug('cannot remove %s', tox_dir)
 
+        for fn in self.CLEAN_FILES:
+            path = join(context['dir'], fn)
+            if isdir(path):
+                try:
+                    rmtree(path)
+                except Exception:
+                    log.debug('cannot remove %s', path)
+            elif exists(path):
+                try:
+                    remove(path)
+                except Exception:
+                    log.debug('cannot remove %s', path)
+
         for root, dirs, file_names in walk(context['dir']):
             for name in dirs:
                 if name == '__pycache__':
@@ -196,7 +211,9 @@ class Base:
 
     @copy_test_files()
     def test(self, context, args):
-        if self.cfg.test_nose:
+        if self.cfg.test_nose2:
+            return 'cd {build_dir}; {interpreter} -m nose2 -v {args}'
+        elif self.cfg.test_nose:
             return 'cd {build_dir}; {interpreter} -m nose -v {args}'
         elif self.cfg.test_pytest:
             return 'cd {build_dir}; {interpreter} -m pytest {args}'
@@ -209,11 +226,9 @@ class Base:
         if log_file is False and self.cfg.really_quiet:
             log_file = None
         command = command.format(**args)
-        if 'PYTHONPATH' in args:
-            env = dict(context['ENV'])
-            env['PYTHONPATH'] = args['PYTHONPATH']
-        else:
-            env = context['ENV']
+        env = dict(context['ENV'])
+        if 'ENV' in args:
+            env.update(args['ENV'])
         log.info(command)
         return execute(command, context['dir'], env, log_file)
 

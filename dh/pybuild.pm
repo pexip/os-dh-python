@@ -147,18 +147,23 @@ sub pybuild_commands {
 		my @pypyopts = ('pybuild', "--$step");
 
 		if ($step == 'test' and $ENV{'PYBUILD_TEST_PYTEST'} ne '1' and
+		       			$ENV{'PYBUILD_TEST_NOSE2'} ne '1' and
 		       			$ENV{'PYBUILD_TEST_NOSE'} ne '1' and
 		       			$ENV{'PYBUILD_TEST_TOX'} ne '1') {
 			if (grep {$_ eq 'python-tox'} @deps and $ENV{'PYBUILD_TEST_TOX'} ne '0') {
 				push @py2opts, '--test-tox'}
 			elsif (grep {$_ eq 'python-pytest'} @deps and $ENV{'PYBUILD_TEST_PYTEST'} ne '0') {
 				push @py2opts, '--test-pytest'}
+			elsif (grep {$_ eq 'python-nose2'} @deps and $ENV{'PYBUILD_TEST_NOSE2'} ne '0') {
+				push @py2opts, '--test-nose2'}
 			elsif (grep {$_ eq 'python-nose'} @deps and $ENV{'PYBUILD_TEST_NOSE'} ne '0') {
 				push @py2opts, '--test-nose'}
 			if (grep {$_ eq 'tox'} @deps and $ENV{'PYBUILD_TEST_TOX'} ne '0') {
 				push @py3opts, '--test-tox'}
 			elsif (grep {$_ eq 'python3-pytest'} @deps and $ENV{'PYBUILD_TEST_PYTEST'} ne '0') {
 				push @py3opts, '--test-pytest'}
+			elsif (grep {$_ eq 'python3-nose2'} @deps and $ENV{'PYBUILD_TEST_NOSE2'} ne '0') {
+				push @py3opts, '--test-nose2'}
 			elsif (grep {$_ eq 'python3-nose'} @deps and $ENV{'PYBUILD_TEST_NOSE'} ne '0') {
 				push @py3opts, '--test-nose'}
 			if (grep {$_ eq 'pypy-tox'} @deps and $ENV{'PYBUILD_TEST_TOX'} ne '0') {
@@ -188,10 +193,11 @@ sub pybuild_commands {
 			}
 		}
 		if ($this->{pydef}) {
-			if (not $pyall and grep {$_ eq 'python' or $_ eq 'python-dev'} @deps) {
+			if (not $pyall and grep {$_ eq 'python' or $_ eq 'python-dev' or
+				       		 $_ eq 'python2.7' or $_ eq 'python2.7-dev'} @deps) {
 				push @result, [@py2opts, '-i', $i, '-p', $this->{pydef}, @options];
 			}
-			if (not $pyalldbg and grep {$_ eq 'python-dbg'} @deps) {
+			if (not $pyalldbg and grep {$_ eq 'python-dbg' or $_ eq 'python2.7-dbg'} @deps) {
 				push @result, [@py2opts, '-i', "$i-dbg", '-p', $this->{pydef}, @options];
 			}
 		}
@@ -224,7 +230,7 @@ sub pybuild_commands {
 	}
 	if (!@result) {
 		use Data::Dumper;
-		die('E: Please add apropriate interpreter package to Build-Depends, see pybuild(1) for details.' .
+		die('E: Please add appropriate interpreter package to Build-Depends, see pybuild(1) for details.' .
 		    'this: ' . Dumper($this) .
 		    'deps: ' . Dumper(\@deps));
 	}

@@ -4,14 +4,14 @@ Priority: optional
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Piotr Ożarowski <piotr@debian.org>
 XSBC-Pexip-Original-Uploaders: Stefano Rivera <stefanor@debian.org>
-Build-Depends: debhelper (>= 9), python3-minimal, libpython3-stdlib, libdpkg-perl,
-# provides rst2man command (python3-docutils not used to avoid circular deps):
- python-docutils,
+Build-Depends: debhelper-compat (= 12), python3-minimal, libpython3-stdlib, libdpkg-perl,
+# provides rst2man command (use python-docutils to avoid circular deps):
+ python3-docutils,
 # used by tests: (disabled to avoid circular deps with python3)
 # python3-nose,
 # python3-all, python3-all-dbg, python3-all-dev,
 # python-all, python-all-dbg, python-all-dev
-Standards-Version: 4.3.0
+Standards-Version: 4.5.0
 Vcs-Git: https://salsa.debian.org/python-team/tools/dh-python.git
 Vcs-Browser: https://salsa.debian.org/python-team/tools/dh-python
 X-Python3-Version: >= 3.2
@@ -27,8 +27,11 @@ Provides: dh-sequence-python3, dh-sequence-pypy, dh-sequence-python2
 Suggests: libdpkg-perl, dpkg-dev
 Breaks:
 # due to /usr/bin/dh_python3 and debhelper files
- python3 (<< 3.3.2-4~)
-Replaces: python3 (<< 3.3.2-4~)
+ python3 (<< 3.3.2-4~),
+# due to /usr/bin/dh_python2 and debhelper files
+ python,
+ python2 (<< 2.7.18-2)
+Replaces: python3 (<< 3.3.2-4~), python (<< 2.7.18-2), python2 (<< 2.7.18-2) 
 Description: Debian helper tools for packaging Python libraries and applications
  This package contains:
   * pybuild - invokes various build systems for requested Python versions in
