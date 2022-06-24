@@ -1,3 +1,9 @@
+dh-python (4.20201102+nmu1pexip2) pexip-bullseye; urgency=medium
+
+  * Main bullseye build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Fri, 24 Jun 2022 13:55:06 +0100
+
 dh-python (4.20201102+nmu1pexip1) pexip; urgency=medium
 
   * Initial bullseye build
