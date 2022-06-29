@@ -1,3 +1,9 @@
+dh-python (5.20220215~bpo11+1pexip1) pexip-bullseye; urgency=medium
+
+  * Rebuild for Pexos bullseye.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Wed, 29 Jun 2022 16:49:36 +0100
+
 dh-python (5.20220215~bpo11+1) bullseye-backports; urgency=medium
 
   * Rebuild for bullseye-backports.
