@@ -218,7 +218,12 @@ class Base:
         elif self.cfg.test_pytest:
             return 'cd {build_dir}; {interpreter} -m pytest {args}'
         elif self.cfg.test_tox:
-            return 'cd {build_dir}; tox -c {dir}/tox.ini -e py{version.major}{version.minor}'
+            # tox will call pip to install the module. Let it install the
+            # module inside the virtualenv
+            pydistutils_cfg = join(args['home_dir'], '.pydistutils.cfg')
+            if exists(pydistutils_cfg):
+                remove(pydistutils_cfg)
+            return 'cd {build_dir}; tox -c {dir}/tox.ini --sitepackages -e py{version.major}{version.minor} {args}'
         elif args['version'] == '2.7' or args['version'] >> '3.1' or args['interpreter'] == 'pypy':
             return 'cd {build_dir}; {interpreter} -m unittest discover -v {args}'
 

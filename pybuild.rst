@@ -46,7 +46,7 @@ debian/rules file example::
  #! /usr/bin/make -f
  export PYBUILD_NAME=foo
  %:
-  	dh $@ --with python2,python3 --buildsystem=pybuild
+  	dh $@ --with python3 --buildsystem=pybuild
 
 OPTIONS
 =======
@@ -91,8 +91,7 @@ ACTION
 
 TESTS
 -----
-    unittest's discover from standard library (available in Python 2.7 and
-    >= 3.2) is used in test step by default.
+    unittest's discover from standard library is used in test step by default.
 
     --test-nose
         use nose module in test step, remember to add python-nose and/or
@@ -195,6 +194,7 @@ DIRECTORIES
       use this name to guess destination directories
       (depending on interpreter, "foo" sets debian/python-foo,
       debian/python3-foo, debian/python3-foo-dbg, etc.)
+      This overrides --dest-dir.
 
 variables that can be used in `DIR`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -218,9 +218,9 @@ LIMITATIONS
 
 disable examples
 ~~~~~~~~~~~~~~~~
-* `--disable test/python2.5-dbg` - disables tests for python2.5-dbg
-* `--disable '2.4 2.7'` - disables all actions for version 2.4 and 2.7
-* `PYBUILD_DISABLE_python2=1` - disables all actions for Python 2.X
+* `--disable test/python3.9-dbg` - disables tests for python3.9-dbg
+* `--disable '3.8 3.9'` - disables all actions for version 3.8 and 3.9
+* `PYBUILD_DISABLE=python3.9` - disables all actions for Python 3.9
 * `PYBUILD_DISABLE_python3.3=test` - disables tests for Python 3.3
 * `PYBUILD_DISABLE=test/python3.3` - same as above
 * `PYBUILD_DISABLE=configure/python3 2.4 pypy` - disables configure
@@ -236,6 +236,7 @@ automatically selected.  These systems are currently supported::
 * distutils (most commonly used)
 * cmake
 * flit
+* pyproject
 * custom
 
 flit plugin
@@ -247,17 +248,52 @@ element in `pyproject.toml`.  The flit plugin only supports python3.  To use
 this plugin::
 
 * build depend on `flit` and either
-* build depend on `python3-toml` so flit can be automatically selected or
+* build depend on `python3-tomli` so flit can be automatically selected or
 * add `export PYBUILD_SYSTEM=flit` to debian/rules to manually select
 
 debian/rules file example::
 
     #! /usr/bin/make -f
     export PYBUILD_NAME=foo
-    export PYBUILD_SYSTEM=flit (needed if python3-toml is not installed)
+    export PYBUILD_SYSTEM=flit (needed if python3-tomli is not installed)
     %:
     	dh $@ --with python3 --buildsystem=pybuild
 
+pyproject
+~~~~~~~~~
+The pyproject plugin drives the new PEP-517 standard interface for
+building Python packages, upstream. This is configured via
+`pyproject.toml`.
+This plugin is still in beta, but it's expected to replace the distutils
+and flit plugins in the future.
+
+To use this plugin:
+
+* build depend on `pybuild-plugin-pyproject` as well as any build tools
+  specified by upstream in `pyproject.toml`.
+
+ENVIRONMENT
+===========
+
+As described above in OPTIONS, pybuild can be configured by `PYBUILD_`
+prefixed environment variables.
+
+Tests are skipped if `nocheck` is in the `DEB_BUILD_OPTIONS` or
+`DEB_BUILD_PROFILES` environment variables.
+
+`DESTDIR` provides a default a default value to the `--dest-dir` option.
+
+Pybuild will export `http_proxy=http://127.0.0.1:9/`,
+`https_proxy=https://127.0.0.1:9/`, and `no_proxy=localhost` to
+hopefully block attempts by the package's build-system to access the
+Internet.
+If network access to a loopback interface is needed and blocked by this,
+export empty `http_proxy` and `https_proxy` variables before calling
+pybuild.
+
+If not set, `LC_ALL`, `CCACHE_DIR`, `DEB_PYTHON_INSTALL_LAYOUT`,
+`_PYTHON_HOST_PLATFORM`, `_PYTHON_SYSCONFIGDATA_NAME`, will all be set
+to appropriate values, before calling the package's build script.
 
 SEE ALSO
 ========

@@ -35,6 +35,7 @@ log = logging.getLogger('dhpython')
 def main(cfg):
     log.debug('cfg: %s', cfg)
     from dhpython import build, PKG_PREFIX_MAP
+    from dhpython.debhelper import DebHelper, build_options
     from dhpython.version import Version, build_sorted, get_requested_versions
     from dhpython.interpreter import Interpreter
     from dhpython.tools import execute, move_matching_files
@@ -47,6 +48,8 @@ def main(cfg):
     nocheck = False
     if 'DEB_BUILD_OPTIONS' in environ:
         nocheck = 'nocheck' in environ['DEB_BUILD_OPTIONS']
+    if not nocheck and 'DEB_BUILD_PROFILES' in environ:
+        nocheck = 'nocheck' in environ['DEB_BUILD_PROFILES']
 
     env = environ.copy()
     # set some defaults in environ to make the build reproducible
@@ -81,14 +84,24 @@ def main(cfg):
         if arch_data['DEB_BUILD_ARCH'] != arch_data['DEB_HOST_ARCH']:
             # support cross compiling Python 3.X extensions, see #892931
             env.setdefault('_PYTHON_SYSCONFIGDATA_NAME',
-                           ('_sysconfigdata__{DEB_HOST_ARCH_OS}'
-                            '_{DEB_HOST_MULTIARCH}').format(**arch_data))
+                           '_sysconfigdata__' + arch_data["DEB_HOST_MULTIARCH"])
 
-    if cfg.system:
+    # Selected on command line?
+    selected_plugin = cfg.system
+
+    # Selected by build_dep?
+    if not selected_plugin:
+        dh = DebHelper(build_options())
+        for build_dep in dh.build_depends:
+            if build_dep.startswith('pybuild-plugin-'):
+                selected_plugin = build_dep.split('-', 2)[2]
+                break
+
+    if selected_plugin:
         certainty = 99
-        Plugin = build.plugins.get(cfg.system)
+        Plugin = build.plugins.get(selected_plugin)
         if not Plugin:
-            log.error('unrecognized build system: %s', cfg.system)
+            log.error('unrecognized build system: %s', selected_plugin)
             exit(10)
         plugin = Plugin(cfg)
         context = {'ENV': env, 'args': {}, 'dir': cfg.dir}
@@ -104,6 +117,7 @@ def main(cfg):
                 continue
             tmp_context = {'ENV': env, 'args': {}, 'dir': cfg.dir}
             tmp_certainty = tmp_plugin.detect(tmp_context)
+            log.debug('Plugin %s: certainty %i', Plugin.NAME, tmp_certainty)
             if tmp_certainty and tmp_certainty > certainty:
                 plugin, certainty, context = tmp_plugin, tmp_certainty, tmp_context
         del Plugin

@@ -19,12 +19,15 @@
 # THE SOFTWARE.
 
 import difflib
+import hashlib
 import logging
 import os
 import re
 import sys
 from filecmp import cmp as cmpfile
-from os.path import lexists, exists, isdir, islink, join, realpath, split, splitext
+from glob import glob
+from os.path import (lexists, exists, getsize, isdir, islink, join, realpath,
+                     relpath, split, splitext)
 from shutil import rmtree
 from stat import ST_MODE, S_IXUSR, S_IXGRP, S_IXOTH
 from dhpython import MULTIARCH_DIR_TPL
@@ -79,6 +82,7 @@ def fix_locations(package, interpreter, versions, options):
 
 def share_files(srcdir, dstdir, interpreter, options):
     """Try to move as many files from srcdir to dstdir as possible."""
+    cleanup_actions = []
     for i in os.listdir(srcdir):
         fpath1 = join(srcdir, i)
         if not lexists(fpath1):  # removed in rename_ext
@@ -93,6 +97,21 @@ def share_files(srcdir, dstdir, interpreter, options):
             if version and version is not True:
                 fpath1 = Scan.rename_ext(fpath1, interpreter, version)
                 i = split(fpath1)[-1]
+        if srcdir.endswith(".dist-info"):
+            if i == 'LICENSE' or i.startswith('LICENSE.'):
+                os.remove(fpath1)
+                cleanup_actions.append((remove_from_RECORD, ([i],)))
+                continue
+            elif isdir(fpath1) and i == 'license_files':
+                cleanup_actions.append((
+                    remove_from_RECORD,
+                    ([
+                        relpath(license, srcdir)
+                        for license in glob(join(srcdir, i, '**'))
+                    ],)
+                ))
+                rmtree(fpath1)
+                continue
         fpath2 = join(dstdir, i)
         if not isdir(fpath1) and not exists(fpath2):
             # do not rename directories here - all .so files have to be renamed first
@@ -108,6 +127,20 @@ def share_files(srcdir, dstdir, interpreter, options):
             share_files(fpath1, fpath2, interpreter, options)
         elif cmpfile(fpath1, fpath2, shallow=False):
             os.remove(fpath1)
+        elif i.endswith(('.abi3.so', '.abi4.so')) and interpreter.parse_public_dir(srcdir):
+            log.warning('%s differs from previous one, removing anyway (%s)', i, srcdir)
+            os.remove(fpath1)
+        elif srcdir.endswith(".dist-info"):
+            # dist-info file that differs... try merging
+            if i == "WHEEL":
+                if merge_WHEEL(fpath1, fpath2):
+                    cleanup_actions.append((fix_merged_RECORD, ()))
+                os.remove(fpath1)
+            elif i == "RECORD":
+                merge_RECORD(fpath1, fpath2)
+                os.remove(fpath1)
+            else:
+                log.warn("No merge driver for dist-info file %s", i)
         else:
             # The files differed so we cannot collapse them.
             log.warn('Paths differ: %s and %s', fpath1, fpath2)
@@ -119,10 +152,111 @@ def share_files(srcdir, dstdir, interpreter, options):
                 diff = difflib.unified_diff(fromlines, tolines, fpath1, fpath2)
                 sys.stderr.writelines(diff)
 
+    for action, args in cleanup_actions:
+        action(dstdir, *args)
     try:
         os.removedirs(srcdir)
     except OSError:
         pass
+
+
+## Functions to merge parts of the .dist-info metadata directory together
+
+def missing_lines(src, dst):
+    """Find all the lines in the text file src that are not in dst"""
+    with open(dst) as fh:
+        current = {k: None for k in fh.readlines()}
+
+    missing = []
+    with open(src) as fh:
+        for line in fh.readlines():
+            if line not in current:
+                missing.append(line)
+
+    return missing
+
+
+def merge_WHEEL(src, dst):
+    """Merge the source .dist-info/WHEEL file into the destination
+
+    Note that after editing the WHEEL file, the sha256 included in
+    the .dist-info/RECORD file will be incorrect and will need fixing
+    using the fix_merged_RECORD() function.
+    """
+    log.debug("Merging WHEEL file %s into %s", src, dst)
+    missing = missing_lines(src, dst)
+    with open(dst, "at") as fh:
+        for line in missing:
+            if line.startswith("Tag: "):
+                fh.write(line)
+            else:
+                log.warn("WHEEL merge discarded line %s", line)
+
+    return len(missing)
+
+
+def merge_RECORD(src, dst):
+    """Merge the source .dist-info/RECORD file into the destination"""
+    log.debug("Merging RECORD file %s into %s", src, dst)
+    missing = missing_lines(src, dst)
+
+    with open(dst, "at") as fh:
+        for line in missing:
+            fh.write(line)
+
+    return len(missing)
+
+
+def fix_merged_RECORD(distdir):
+    """Update the checksum for .dist-info/WHEEL in .dist-info/RECORD
+
+    After merging the .dist-info/WHEEL file, the sha256 recorded for it will be
+    wrong in .dist-info/RECORD, so edit that file to ensure that it is fixed.
+    The output is sorted for reproducibility.
+    """
+    log.debug("Fixing RECORD file in %s", distdir)
+    record_path = join(distdir, "RECORD")
+    wheel_path = join(distdir, "WHEEL")
+    wheel_dir = split(split(record_path)[0])[1]
+    wheel_relpath = join(wheel_dir, "WHEEL")
+
+    with open(wheel_path, "rb") as fh:
+        wheel_sha256 = hashlib.sha256(fh.read()).hexdigest();
+    wheel_size = getsize(wheel_path)
+
+    contents = [
+        "{name},sha256={sha256sum},{size}\n".format(
+            name=wheel_relpath,
+            sha256sum=wheel_sha256,
+            size=wheel_size,
+        )]
+    with open(record_path) as fh:
+        for line in fh.readlines():
+            if not line.startswith(wheel_relpath):
+                contents.append(line)
+    # now write out the updated record
+    with open(record_path, "wt") as fh:
+        fh.writelines(sorted(contents))
+
+
+def remove_from_RECORD(distdir, files):
+    """Remove all specified dist-info files from RECORD"""
+    log.debug("Removing %r from RECORD in %s", files, distdir)
+    record = join(distdir, "RECORD")
+    parent_dir = split(distdir)[1]
+    names = [join(parent_dir, name) for name in files]
+    lines = []
+    with open(record) as fh:
+        lines = fh.readlines()
+
+    filtered = [line for line in lines if not line.split(',', 1)[0] in names]
+
+    if lines == filtered:
+        log.warn("Unable to remove %r from RECORD in %s, not found",
+                 files, distdir)
+
+    with open(record, 'wt') as fh:
+        fh.writelines(sorted(filtered))
 
 
 class Scan:
@@ -146,6 +280,7 @@ class Scan:
         self.options = options
         self.result = {'requires.txt': set(),
                        'egg-info': set(),
+                       'dist-info': set(),
                        'nsp.txt': set(),
                        'shebangs': set(),
                        'public_vers': set(),
@@ -195,6 +330,10 @@ class Scan:
                     rmtree(dpath)
                     dirs.remove(name)
                     continue
+
+            if self.is_dist_dir(root):
+                self.handle_dist_dir(root, file_names)
+                continue
 
             if self.is_egg_dir(root):
                 self.handle_egg_dir(root, file_names)
@@ -251,7 +390,7 @@ class Scan:
                 if fext == 'py' and self.handle_public_module(fpath) is not False:
                     self.current_result['compile'] = True
 
-            if not dirs:
+            if not dirs and not self.current_private_dir:
                 try:
                     os.removedirs(root)
                 except OSError:
@@ -420,6 +559,20 @@ class Scan:
                 log.info('renaming %s to %s', name, clean_name)
                 os.rename(fpath, join(root, clean_name))
         self.result['egg-info'].add(join(root, clean_name))
+
+    def is_dist_dir(self, dname):
+        """Check if given directory contains dist-info."""
+        return dname.endswith('.dist-info')
+
+    def handle_dist_dir(self, dpath, file_names):
+        path, dname = dpath.rsplit('/', 1)
+        if self.is_dbg_package and self.options.clean_dbg_pkg:
+            rmtree(dpath)
+            return
+
+        if file_names:
+            if 'METADATA' in file_names:
+                self.result['dist-info'].add(join(dpath, 'METADATA'))
 
     def cleanup(self):
         if self.is_dbg_package and self.options.clean_dbg_pkg:
