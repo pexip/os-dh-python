@@ -1,3 +1,9 @@
+dh-python (5.20220215~bpo11+1pexip2) pexip-bullseye; urgency=medium
+
+  * Bullseye rebuild for ARM64 inclusion
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Mon, 05 Sep 2022 10:31:30 +0100
+
 dh-python (5.20220215~bpo11+1pexip1) pexip-bullseye; urgency=medium
 
   * Rebuild for Pexos bullseye.
