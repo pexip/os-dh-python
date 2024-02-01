@@ -1,3 +1,9 @@
+dh-python (5.20230130~bpo11+1+pexip24u4) pexip-bookworm; urgency=medium
+
+  * New versioning scheme
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 01 Feb 2024 15:55:42 +0000
+
 dh-python (5.20230130~bpo11+1pexip3) pexip-bookworm; urgency=medium
 
   * Bookworm build for product distribution
